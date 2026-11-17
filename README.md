@@ -31,8 +31,9 @@ future-me — short, concrete, current.
 
 | Where | What | How it runs | Notes |
 |---|---|---|---|
-| **192.168.1.230** | wa-bot | `wabot.service` (user systemd) | WhatsApp bot, Go + whatsmeow. See [wabot.md](./wabot.md). |
+| **192.168.1.230** | wa-bot | `wabot.service` (user systemd) | WhatsApp bot, Go + whatsmeow. See [wabot.md](./wabot.md). Also runs the intercom bridge (`:8766`). |
 | **192.168.1.230** | wifi-presence | `presence.service` (user systemd) | LAN presence tracker, Go. Hostnames now land from `/captcha/leases`. See [wifi-presence.md](./wifi-presence.md). |
+| **192.168.1.230** | Mosquitto | `mosquitto.service` (system) | MQTT broker, `:1883` on `0.0.0.0`. Users: `wabot`, `wallphone`, `ha`. Password file **must** be owned by the `mosquitto` service user. |
 | **192.168.1.230** | AdGuard Home | binary daemon | DNS filtering, upstream = router. Was on `.7`, moved to `.230`. |
 | **192.168.1.230** | Tailscale | `tailscaled` | DNS hijack **disabled** (`--accept-dns=false`) — broke wa-bot last time. |
 | **192.168.1.230** | MongoDB | system service | Only used by wa-bot for one legacy feature (planned to drop). |
@@ -49,14 +50,18 @@ Deployment is **rsync from laptop → server**, binary built locally with
 `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build`. Server has no Go toolchain
 on PATH (but one exists at `~/toolchains/go/bin/go` — used by picoclaw).
 
-## What's planned
+## What's planned / in progress
 
 - [wall-phone-plan.md](./wall-phone-plan.md) — rooted Redmi Note 10 as a wall
-  assistant: voice (Google Assistant), CCTV (IP Webcam), intercom
-  (WhatsApp → wabot → MQTT → phone), HA Core dashboard.
-- MQTT broker on `.230`: planned for the wall-phone project. Not installed yet.
-- Home Assistant Core on `.230`: planned, not installed. Low-RAM configuration
-  pinned in the plan file.
+  assistant.
+  - ✅ **Phase 1** — Mosquitto up on `.230:1883`, LAN-reachable.
+  - ✅ **Phase 2** — wabot intercom bridge live. Voice note from owner →
+    cached + HTTP-served at `:8766` + MQTT-published to `intercom/play`.
+    Verified end-to-end 2026-11-17.
+  - ⏳ **Phase 3** — Tasker profile on the phone to auto-play the URL.
+    Blocked on clicking through the phone UI.
+  - ⏳ **Phase 4** — Home Assistant Core on `.230` for dashboard +
+    camera + mobile companion. Low-RAM config pinned in the plan file.
 
 ## Known gotchas (things that broke before)
 

@@ -55,6 +55,13 @@ wabot env | path         # inspect config paths
 | `AI_PREFERRED=anthropic` | Which AI backend to prefer |
 | `PRESENCE_API_URL=http://127.0.0.1:8765` | wifi-presence base URL |
 | `PRESENCE_ALERTS=off` | Owner DM alerts on arrive/depart. **off** by current preference |
+| `INTERCOM_ENABLED=on` | Wall-phone intercom. When on, owner voice notes auto-forward via MQTT |
+| `INTERCOM_MQTT_BROKER=tcp://127.0.0.1:1883` | Local Mosquitto |
+| `INTERCOM_MQTT_USER / _PASSWORD` | wabot's MQTT creds |
+| `INTERCOM_MQTT_TOPIC=intercom/play` | Topic the phone subscribes to |
+| `INTERCOM_HTTP_LISTEN=0.0.0.0:8766` | Where audio clips are served |
+| `INTERCOM_PUBLIC_URL=http://192.168.1.230:8766` | What we tell the phone to fetch from |
+| `INTERCOM_CACHE_DIR=/tmp/wabot-intercom` | Where downloaded clips live for TTL minutes |
 
 ## Commands
 
@@ -129,12 +136,40 @@ it may call these tools transparently. Add a new tool: define it in
 - **Owner detection** uses both the main sender JID and the SenderAlt
   LID — the `fix(router)` commit (`f62e854`) added that.
 
+## Intercom module (new)
+
+`internal/intercom/intercom.go` — wabot ↔ MQTT bridge for the wall-phone
+project. See [wall-phone-plan.md](./wall-phone-plan.md) for the whole
+flow. Short summary:
+
+- Hook registered FIRST in main.go's router hook chain.
+- Only owner DMs trigger it; group messages and non-audio messages are
+  ignored.
+- Caption can be empty (any voice note), `!say`, or `!intercom`.
+- Downloads via whatsmeow `cli.Download`, writes `<uuid>.opus` under
+  `INTERCOM_CACHE_DIR`, HTTP-serves on `INTERCOM_HTTP_LISTEN`, publishes
+  a JSON envelope to `INTERCOM_MQTT_TOPIC`.
+- Reacts 📣 to the WA message so the owner sees acknowledgement.
+- Stop() tears down HTTP + MQTT cleanly on signal.
+
+Dep added: `github.com/eclipse/paho.mqtt.golang v1.5.1`.
+
+Router behaviour change: previously `router.Dispatch` returned early on
+empty text, so media-only messages never reached any hook. The empty
+check now runs AFTER the hook loop, letting passive media hooks (like
+intercom) see those events. Hooks that only care about text already
+handle the empty case (checked: welcome, blocklist, antilink).
+
 ## Recently merged
 
 Roughly in order (see `git log origin/main --oneline` for the real list):
 
-- `41a859a` (local, pending push) — menu owner-filter + grouping, hostname
-  in presence alerts.
+- `588afb8` (pending push) — chore(intercom): nest default cache dir
+  under `/tmp/wabot/` to avoid colliding with staging scp targets.
+- `b74b1e5` (pending push) — feat(intercom): WhatsApp voice note from
+  owner → MQTT → wall-phone audio URL.
+- `41a859a` (pending push) — menu owner-filter + grouping, hostname in
+  presence alerts.
 - `c463a0b` — merge PR #1: presence skill (`!home`, `!devices`, `!label`,
   owner alerter).
 - `7caaa42` — expense: list-all default, group description sync, bold fix.

@@ -1,7 +1,11 @@
-# Wall-phone plan (unbuilt)
+# Wall-phone plan
 
 A rooted Redmi Note 10 sticks to the wall and becomes a home assistant.
-Not built yet — just captured here so we don't re-design it next session.
+
+**Progress:** Phases 1 + 2 done. Intercom pipeline working end-to-end on
+`.230` — WhatsApp voice note from an owner is now live-forwarded to a
+local MQTT topic + HTTP-served audio URL. Phase 3 (Tasker on the phone)
+and Phase 4 (HA Core) are the remaining work.
 
 Decisions made:
 - **Voice**: Google Assistant for v1 (cloud-ok). Keep Rhasspy as a later
@@ -127,13 +131,20 @@ recorder:
 
 Total hardware/software spend: ~₹2000 upfront.
 
-### Phase 1 — MQTT on `.230` (15 min)
+### Phase 1 — MQTT on `.230` ✅ DONE 2026-11-17
 
 ```sh
 sudo apt install -y mosquitto mosquitto-clients
 sudo mosquitto_passwd -c /etc/mosquitto/passwd wabot
 sudo mosquitto_passwd    /etc/mosquitto/passwd wallphone
 sudo mosquitto_passwd    /etc/mosquitto/passwd ha
+
+# MUST own the passwd file as the mosquitto service user, otherwise
+# mosquitto crashes with status 13 on start. `mosquitto_passwd -c` under
+# sudo creates it as root:root 600 — the service user can't read that.
+sudo chown mosquitto:mosquitto /etc/mosquitto/passwd
+sudo chmod 640 /etc/mosquitto/passwd
+sudo chown mosquitto:mosquitto /var/log/mosquitto  # fixes "unable to open log file" warning
 
 cat <<'EOF' | sudo tee /etc/mosquitto/conf.d/auth.conf
 listener 1883 0.0.0.0
@@ -143,50 +154,112 @@ EOF
 sudo systemctl enable --now mosquitto
 ```
 
-Smoke test: `mosquitto_sub -u wallphone -P … -t 'test/#'` on phone side
-while `mosquitto_pub -u wabot -P … -t 'test/x' -m 'hi'` on server side.
+Smoke-tested from .230: `mosquitto_sub -h 127.0.0.1 -u wabot -P <pw>
+-t 'intercom/#' -v` picks up the JSON when a voice note is forwarded.
 
-### Phase 2 — wabot intercom bridge (~150 lines of Go)
+Gotchas captured so we don't repeat them:
+- **`exit-code 13 / Unable to open pwfile`** = passwd not readable by
+  the `mosquitto` service user. See the chown line above.
+- **`exit-code 13 / Start request repeated too quickly`** = systemd
+  backoff after N failed starts. Run
+  `sudo systemctl reset-failed mosquitto` before trying again.
+- Current listener is bound to `0.0.0.0:1883`. The wall phone can reach
+  it directly on the LAN.
 
-New file `internal/intercom/intercom.go`:
-- Tiny HTTP server on `127.0.0.1:8766` that serves cached audio by UUID
-  with a 10-minute TTL cleanup goroutine.
-- MQTT client (`eclipse/paho.mqtt.golang`) that publishes URL + duration
-  to `intercom/play` on receipt.
+### Phase 2 — wabot intercom bridge ✅ DONE 2026-11-17
 
-Hook into the message handler in `internal/router/router.go`:
-- When `env.Msg.GetAudioMessage() != nil` **and** `env.IsOwner` **and**
-  (caption is empty OR `!say`), run the pipeline. Else fall through to
-  existing handlers.
+Commits `b74b1e5` + `588afb8` on `main` of
+[sirajju/whatsapp-bot-with-ai](https://github.com/sirajju/whatsapp-bot-with-ai).
 
-New `.env` vars:
+New package `internal/intercom/intercom.go`:
+- HTTP server on `0.0.0.0:8766` (LAN-reachable) serves cached audio by
+  UUID. Served only when the UUID is in the in-memory registered map,
+  not as a generic file server.
+- MQTT client (`eclipse/paho.mqtt.golang` v1.5.1) publishes
+  `{"url":...,"seconds":...,"sender":...,"id":...,"ts":...}` to
+  `intercom/play` with QoS 1 on receipt.
+- TTL janitor deletes cached files + removes entries from the map every
+  5 min (half the default TTL of 10 min).
+- On delivery, reacts 📣 to the WhatsApp message so the owner sees
+  acknowledgement without a reply.
+
+Router change in `internal/router/router.go`: Dispatch previously
+bailed on empty text, so media-only messages never reached any hook.
+Moved the `text == ""` check after the hook loop so passive media hooks
+can run.
+
+`.env` on `.230`:
 ```
 INTERCOM_ENABLED=on
+INTERCOM_MQTT_BROKER=tcp://127.0.0.1:1883   # wabot is same-host; phone uses .230:1883
+INTERCOM_MQTT_USER=wabot
+INTERCOM_MQTT_PASSWORD=<secret, in .env only>
+INTERCOM_MQTT_TOPIC=intercom/play
+INTERCOM_HTTP_LISTEN=0.0.0.0:8766
 INTERCOM_PUBLIC_URL=http://192.168.1.230:8766
-MQTT_BROKER=tcp://127.0.0.1:1883
-MQTT_USER=wabot
-MQTT_PASSWORD=...
+INTERCOM_CACHE_DIR=/tmp/wabot-intercom
 ```
 
-### Phase 3 — Tasker on the phone (~20 min)
+Owner gate: identical to router.buildEnv's — both `Sender.User` and
+`SenderAlt.User` are checked. Group messages are ignored on purpose;
+this is a 1:1 pipe.
 
-Profile: **MQTT Subscription → `intercom/play`** (QoS 1).
+Verification run 2026-11-17T15:59:54:
+- Voice note from owner 917593980565.
+- Downloaded 4310 bytes, 1 sec.
+- Cached at `/tmp/wabot-intercom/d09f926da805e467.opus`.
+- HTTP `GET http://192.168.1.230:8766/audio/d09f926da805e467.opus`
+  returns 200, Content-Type `audio/ogg`.
+- MQTT JSON published to `intercom/play`.
+
+Gotcha captured: the intercom cache dir default collided with my
+staging scp target. Fixed in `588afb8` — default is now
+`/tmp/wabot/intercom`. Deployments that already set
+`INTERCOM_CACHE_DIR` are unaffected.
+
+### Phase 3 — Tasker on the phone — NEXT ⏳
+
+This is what blocks the "say something at my office and it plays on the
+wall phone" flow. Pure click-through on the phone side; server side is
+already waiting for subscribers.
+
+Tasker MQTT Client Profile:
+- **Broker:** `tcp://192.168.1.230:1883`
+- **User:** `wallphone` (set with `mosquitto_passwd` in Phase 1)
+- **Password:** the wallphone user's password
+- **Topic:** `intercom/play`
+- **QoS:** 1
+- **Clean session:** off — so brief disconnects don't lose a message.
 
 Task on message:
-1. `Variables → Variable Set %url = %mqtt_message` (JSON parse → `.url`).
+1. `Variables → Variable Set %url = %mqtt_message` (if plain), OR
+   `JavaScriptlet var m = JSON.parse(mqtt_message); setLocal('url', m.url);`
+   if your Tasker version requires parsing.
 2. `Net → HTTP Request GET %url → /sdcard/intercom/%TIMES.opus`.
-3. `Media → Media Volume = 10` (force audible).
+3. `Media → Media Volume = 10` (force audible — wall phone should be
+   plugged in and set to media routing).
 4. `Media → Media Play /sdcard/intercom/%TIMES.opus`.
-5. `Task → Wait Until → %MEDIASTATUS ≠ Playing` (or fixed wait).
+5. `Task → Wait Until → %MEDIASTATUS ≠ Playing` (or fixed `Wait 10s` if
+   the variable is unreliable).
 6. `File → Delete /sdcard/intercom/%TIMES.opus`.
 
-Also add voice profiles (AutoVoice):
-- "manorama" → launch browser to the live URL, or Deep Link to the
-  YouTube app with channel ID.
-- "cctv" → Open HA dashboard → camera view.
-- Google Assistant handles "open youtube", alarms, reminders natively.
+Smoke test for Phase 3 **without** Tasker (prove the subscriber flow
+first):
+```sh
+# on the laptop
+mosquitto_sub -h 192.168.1.230 -u wallphone -P <pw> -t 'intercom/play' -v
+# then WhatsApp a voice note to the bot
+```
+You should see a JSON line and `curl` on the URL should return the
+clip. Once that works, duplicate the same subscribe inside Tasker on
+the phone and the auto-play is done.
 
-### Phase 4 — HA Core on `.230` (~90 min)
+Other Tasker voice profiles (do these after intercom works):
+- "manorama" → launch browser to the live URL, or deep-link to YouTube.
+- "cctv" → Open HA dashboard → camera view.
+- Google Assistant already handles "open youtube", alarms, reminders.
+
+### Phase 4 — HA Core on `.230` (~90 min) ⏳ TODO
 
 ```sh
 sudo apt install -y python3-dev python3-venv libffi-dev libssl-dev \
