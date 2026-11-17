@@ -1,0 +1,144 @@
+# wa-bot
+
+Self-hosted WhatsApp bot. Go + [`whatsmeow`](https://github.com/tulir/whatsmeow)
++ `modernc.org/sqlite` + `rs/zerolog`. No cgo, static binary, no Docker.
+
+- **Repo:** [github.com/sirajju/whatsapp-bot-with-ai](https://github.com/sirajju/whatsapp-bot-with-ai)
+- **Dev checkout:** `~/whatsapp-bot-with-ai` on laptop `.16`
+- **Server copy:** `~/whatsapp-bot-with-ai` on `.230` (no `.git` — rsynced)
+- **Binary:** `~/whatsapp-bot-with-ai/bin/wabot` (18 MB static, linux/amd64)
+- **User systemd unit:** `wabot.service`
+- **Log:** `~/whatsapp-bot-with-ai/wabot.log`
+
+## Deployment
+
+The server has no system Go on PATH. Build locally, rsync, swap binary:
+
+```sh
+# On the laptop
+cd ~/whatsapp-bot-with-ai
+PATH="$HOME/sdk/go/bin:$PATH" \
+  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+  go build -trimpath -ldflags='-s -w' -o /tmp/wabot-new ./cmd/wabot
+scp /tmp/wabot-new sirajju@192.168.1.230:/tmp/wabot-new
+ssh sirajju@192.168.1.230 '
+  systemctl --user stop wabot &&
+  install -m 755 /tmp/wabot-new ~/whatsapp-bot-with-ai/bin/wabot &&
+  systemctl --user start wabot
+'
+```
+
+The CLI wrapper `wabot` on `.230` (`~/.local/bin/wabot`) has convenience
+subcommands that do all of the above:
+
+```
+wabot status | start | stop | restart | enable | disable
+wabot logs [-f] [-n N]   # application log
+wabot journal [-f]       # systemd journal
+wabot build              # build binary (needs Go)
+wabot deploy             # build + restart
+wabot run                # foreground run — debug only
+wabot ps                 # pid, cpu/mem, open sockets
+wabot env | path         # inspect config paths
+```
+
+## Config (`~/whatsapp-bot-with-ai/.env`)
+
+| Var | Purpose |
+|---|---|
+| `PREFIX=!` | Command prefix |
+| `OWNERS=917XXXXXXXXX` | CSV of owner phone numbers (JID User part) |
+| `LOGIN_MODE=pairing` + `PAIR_PHONE=…` | Headless pairing login |
+| `SESSION_DIR=./session` | Where whatsmeow stores its sqlite session |
+| `GROUP_TRIGGER_MENTION_ONLY=on` | Only respond in groups when @mentioned |
+| `ANTHROPIC_API_KEY=…` | AI provider (also supports OpenAI, Gemini, Groq, Ollama) |
+| `AI_PREFERRED=anthropic` | Which AI backend to prefer |
+| `PRESENCE_API_URL=http://127.0.0.1:8765` | wifi-presence base URL |
+| `PRESENCE_ALERTS=off` | Owner DM alerts on arrive/depart. **off** by current preference |
+
+## Commands
+
+Owner-only commands are now **hidden from non-owners in `!menu`** and
+grouped under a separator for owners. The marker is a help-string prefix
+`owner:` — if a command is owner-gated at the handler, make its help
+string start with `owner:` and the menu does the right thing automatically.
+
+### Normal
+- `!ai [prompt]` — Ask the AI. Default persona is friendly WhatsApp assistant.
+- `!persona <name>` — Swap AI persona per chat.
+- `!clearai` — Reset AI history for this chat.
+- `!expense` — Shared expense tracker. See `!expense help`.
+- `!home` / `!devices` — LAN presence (owner-only). Shows hostnames.
+- `!ping`, `!menu`, `!quote`, `!qr`, `!8ball`, `!joke`, `!calc`, …
+
+### Owner-only
+- `!send <phone> <text>` — DM any phone from the bot number.
+- `!broadcast <text>` — DM all contacts (rate-limited).
+- `!label <mac> <name> [owner]` — Rename a device in wifi-presence.
+- `!block <phone>` / `!unblock <phone>` — Blocklist.
+- `!restart`, `!sh <cmd>`, `!shutdown`.
+
+## Skills (user-extensible)
+
+Executable scripts under `~/whatsapp-bot-with-ai/skills/` are exposed as
+`!skill <name> [args]`. Each one runs as its own process, gets env
+`WABOT_SENDER`, `WABOT_CHAT`, `WABOT_OWNER`, `WABOT_GROUP`, `WABOT_ARGS`,
+and its stdout becomes the chat reply. Output is now sent **without**
+code-block wrapping so `*bold*` / `_italic_` render on WhatsApp.
+
+Current skills:
+- `expense` (Python) — the shared expense tracker. Full doc in
+  `~/whatsapp-bot-with-ai/skills/expense`.
+
+To add a new skill:
+```sh
+cd ~/whatsapp-bot-with-ai/skills
+cat > weather <<'PY'
+#!/usr/bin/env python3
+# desc: get the weather
+import sys, requests
+...
+PY
+chmod +x weather
+# No restart needed; !skill list picks it up on next call.
+```
+
+## AI tool-calling
+
+The bot's AI layer can call tools it registers in
+`internal/aitools/registry.go`. Live count: **24 tools**. Categories:
+- Expense (add/pay/list/split/settle/credit/sync + bulk).
+- Presence (home status, device labelling via wifi-presence).
+- Reminders (set/list).
+- Web (search, fetch).
+- Weather.
+
+When the AI is used (either `!ai` or auto-reply in DMs when `AI_MODE=on`),
+it may call these tools transparently. Add a new tool: define it in
+`internal/aitools/<name>.go`, register in `RegisterAll()`, rebuild.
+
+## Known behaviours worth remembering
+
+- **Session file** (`~/whatsapp-bot-with-ai/session/*.db`) is the
+  whatsmeow pairing token. Delete it to force re-pair. **Do NOT
+  rsync it between machines** — WhatsApp invalidates the session.
+- **Auto-restart on WhatsApp websocket failure** — if the bot wedges
+  (WebSocket silently dies), the service keeps running but stops
+  responding. Watch the log: `"keepalive"` lines every ~30s; if they
+  stop for > 2 min, `wabot restart`.
+- **Owner detection** uses both the main sender JID and the SenderAlt
+  LID — the `fix(router)` commit (`f62e854`) added that.
+
+## Recently merged
+
+Roughly in order (see `git log origin/main --oneline` for the real list):
+
+- `41a859a` (local, pending push) — menu owner-filter + grouping, hostname
+  in presence alerts.
+- `c463a0b` — merge PR #1: presence skill (`!home`, `!devices`, `!label`,
+  owner alerter).
+- `7caaa42` — expense: list-all default, group description sync, bold fix.
+- `8262271` — expense: credit expenses + settle + bulk add via AI.
+- `1845c54` — expense: split members separate from items + AI tools.
+- `54bdea4` — expense: initial shared expense tracker.
+- `f4c9c15` — WhatsApp-aware AI, auto-welcome DM, owner `!send`, installer.
