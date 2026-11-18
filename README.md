@@ -58,9 +58,11 @@ on PATH (but one exists at `~/toolchains/go/bin/go` — used by picoclaw).
   - ✅ **Phase 2** — wabot intercom bridge live. Voice note from owner →
     cached + HTTP-served at `:8766` + MQTT-published to `intercom/play`.
   - ✅ **Phase 3** — Termux subscriber on the wall phone (`~/intercom.sh`,
-    boot hook at `~/.termux/boot/intercom`). Played a WhatsApp voice
-    note on the wall-phone speaker 2026-11-18. Tasker was skipped —
-    the free MQTT-plugin landscape was grim and Termux was leaner.
+    boot hook at `~/.termux/boot/intercom` with a `sleep 15 +
+    termux-volume` warm-up for the Termux:API IPC bridge). Verified
+    across reboots 2026-11-18: WhatsApp voice note plays on the
+    speaker with no user interaction. Tasker was skipped — the free
+    MQTT-plugin landscape was grim and Termux was leaner.
   - ⏳ **Phase 4** — Home Assistant Core on `.230` for dashboard +
     camera + mobile companion. Low-RAM config pinned in the plan file.
 

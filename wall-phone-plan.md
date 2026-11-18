@@ -268,9 +268,22 @@ Boot hook (`~/.termux/boot/intercom`):
 
 ```bash
 #!/data/data/com.termux/files/usr/bin/bash
+# Keep Termux's foreground service alive post-boot.
 termux-wake-lock
-exec ~/intercom.sh >/sdcard/intercom.log 2>&1
+# Give Termux:API's background service time to initialize after boot.
+sleep 15
+# Prime the IPC bridge so the first media-player call doesn't hang.
+termux-volume music >/dev/null 2>&1 || true
+# Start intercom. Log goes to $HOME, not /sdcard — /sdcard isn't writable
+# until termux-setup-storage runs AND the permission is granted.
+exec ~/intercom.sh > ~/intercom.log 2>&1
 ```
+
+The `sleep 15` + `termux-volume` warm-up is load-bearing. Without it the
+boot hook fires and `intercom.sh` runs, but `termux-media-player` hangs
+silently on the first few voice notes because the Termux:API background
+IPC bridge isn't warm yet. Symptom was "works after you open Termux
+manually" — opening the main app woke the bridge.
 
 Gotchas captured so we don't repeat them:
 
@@ -295,6 +308,21 @@ Gotchas captured so we don't repeat them:
   initial intercom.sh had this and errors from `termux-media-player`
   (the APK-missing ones) were invisible. Keep it visible until you've
   seen a successful playback at least once.
+- **Termux:Boot fires its receiver but the script "doesn't work" on
+  the first voice note after reboot** = Termux:API IPC bridge cold.
+  Solved by the `sleep 15 && termux-volume music >/dev/null` warm-up
+  at the top of the boot hook (above). Without that step the boot
+  script runs, Termux:Boot is doing its job correctly, but every
+  Termux:API-dependent call (`termux-media-player`, `termux-volume`,
+  `termux-notification`) hangs until the main Termux process is
+  opened manually.
+- **`cmd deviceidle whitelist +…` and `am broadcast` via `su -c` fail
+  on crDroid with KernelSU** with "Failed transaction (2147483646)"
+  — it's a KernelSU IPC quirk. Not a problem: real `BOOT_COMPLETED`
+  delivery goes through init, not `am`, so Termux:Boot still fires
+  at real boot even though we can't fake-broadcast for testing.
+  Debug by restarting the boot hook directly (`~/.termux/boot/intercom`)
+  instead of simulating a boot.
 
 Other voice triggers (not done, can be added later):
 - "manorama" → launch browser to the live URL.
