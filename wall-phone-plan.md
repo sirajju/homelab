@@ -1,11 +1,16 @@
 # Wall-phone plan
 
-A rooted Redmi Note 10 sticks to the wall and becomes a home assistant.
+A rooted Redmi Note 10 (crDroid) sticks to the wall and becomes a home
+assistant.
 
-**Progress:** Phases 1 + 2 done. Intercom pipeline working end-to-end on
-`.230` — WhatsApp voice note from an owner is now live-forwarded to a
-local MQTT topic + HTTP-served audio URL. Phase 3 (Tasker on the phone)
-and Phase 4 (HA Core) are the remaining work.
+**Progress:** Phases 1 + 2 + 3 done. Intercom pipeline works end-to-end
+— WhatsApp voice note → wabot → MQTT → **wall-phone speaker**. Phase 4
+(HA Core) is the remaining work.
+
+Instead of Tasker + an MQTT plugin (the free Play Store landscape was
+grim and the user wasn't buying a paywalled plugin for day one), we
+ended up using **Termux + mosquitto_sub** as the subscriber. Zero cost,
+more flexible, works headless at boot.
 
 Decisions made:
 - **Voice**: Google Assistant for v1 (cloud-ok). Keep Rhasspy as a later
@@ -217,46 +222,83 @@ staging scp target. Fixed in `588afb8` — default is now
 `/tmp/wabot/intercom`. Deployments that already set
 `INTERCOM_CACHE_DIR` are unaffected.
 
-### Phase 3 — Tasker on the phone — NEXT ⏳
+### Phase 3 — subscriber on the phone ✅ DONE 2026-11-18
 
-This is what blocks the "say something at my office and it plays on the
-wall phone" flow. Pure click-through on the phone side; server side is
-already waiting for subscribers.
+Uses **Termux + mosquitto_sub + termux-media-player** instead of
+Tasker. Lives at `~/intercom.sh` on the phone, auto-starts from
+`~/.termux/boot/intercom`.
 
-Tasker MQTT Client Profile:
-- **Broker:** `tcp://192.168.1.230:1883`
-- **User:** `wallphone` (set with `mosquitto_passwd` in Phase 1)
-- **Password:** the wallphone user's password
-- **Topic:** `intercom/play`
-- **QoS:** 1
-- **Clean session:** off — so brief disconnects don't lose a message.
+Install, phone-side (SSH in from the laptop after `pkg install
+openssh && passwd && sshd` to make all of this paste-able):
 
-Task on message:
-1. `Variables → Variable Set %url = %mqtt_message` (if plain), OR
-   `JavaScriptlet var m = JSON.parse(mqtt_message); setLocal('url', m.url);`
-   if your Tasker version requires parsing.
-2. `Net → HTTP Request GET %url → /sdcard/intercom/%TIMES.opus`.
-3. `Media → Media Volume = 10` (force audible — wall phone should be
-   plugged in and set to media routing).
-4. `Media → Media Play /sdcard/intercom/%TIMES.opus`.
-5. `Task → Wait Until → %MEDIASTATUS ≠ Playing` (or fixed `Wait 10s` if
-   the variable is unreliable).
-6. `File → Delete /sdcard/intercom/%TIMES.opus`.
-
-Smoke test for Phase 3 **without** Tasker (prove the subscriber flow
-first):
 ```sh
-# on the laptop
-mosquitto_sub -h 192.168.1.230 -u wallphone -P <pw> -t 'intercom/play' -v
-# then WhatsApp a voice note to the bot
+pkg install -y mosquitto jq curl termux-api termux-services which
 ```
-You should see a JSON line and `curl` on the URL should return the
-clip. Once that works, duplicate the same subscribe inside Tasker on
-the phone and the auto-play is done.
 
-Other Tasker voice profiles (do these after intercom works):
-- "manorama" → launch browser to the live URL, or deep-link to YouTube.
-- "cctv" → Open HA dashboard → camera view.
+The script (`~/intercom.sh`):
+
+```bash
+#!/data/data/com.termux/files/usr/bin/bash
+BROKER=192.168.1.230
+USER=wallphone
+PASSWORD=<set-via-sed>
+TOPIC=intercom/play
+
+termux-wake-lock
+trap 'termux-wake-unlock; exit' INT TERM
+
+while true; do
+  mosquitto_sub -h "$BROKER" -u "$USER" -P "$PASSWORD" -t "$TOPIC" 2>&1 \
+  | while read -r line; do
+      url=$(echo "$line" | jq -r '.url' 2>/dev/null)
+      [ -z "$url" ] || [ "$url" = "null" ] && continue
+      f="$HOME/clip-$(date +%s).opus"
+      echo "[$(date +%H:%M:%S)] playing $url"
+      if curl -s --max-time 15 -o "$f" "$url"; then
+        termux-media-player play "$f"
+        sleep "$(($(echo "$line" | jq -r '.seconds // 10') + 3))"
+        rm -f "$f"
+      fi
+    done
+  sleep 5  # reconnect loop
+done
+```
+
+Boot hook (`~/.termux/boot/intercom`):
+
+```bash
+#!/data/data/com.termux/files/usr/bin/bash
+termux-wake-lock
+exec ~/intercom.sh >/sdcard/intercom.log 2>&1
+```
+
+Gotchas captured so we don't repeat them:
+
+- **Termux package is `mosquitto`**, not `mosquitto-clients`. The
+  Debian-style split doesn't exist here.
+- **Termux has no `which` by default.** `pkg install which` or just
+  use `command -v`.
+- **Termux cannot write to `/tmp`** — the sandbox excludes it. Use
+  `$HOME` or `$TMPDIR` (`/data/data/com.termux/files/usr/tmp`).
+- **Termux-API CLI tools hang silently** if the Termux:API **APK** isn't
+  installed or hasn't been opened once from the launcher. The CLI pkg
+  (`termux-api`) only installs wrappers; the APK is a separate F-Droid
+  install and must be launched manually once so Android registers its
+  IPC. Same for Termux:Boot — the boot script won't fire without the
+  APK installed and opened.
+- **`termux-volume` with no args reads** the current levels and prints
+  JSON. `termux-volume music 12` writes. We got confused when the read
+  form appeared to "hang" — turns out the Termux:API APK wasn't
+  installed; `termux-media-player` was silently hanging for the same
+  reason.
+- **Don't swallow stderr** with `>/dev/null 2>&1` during dev — the
+  initial intercom.sh had this and errors from `termux-media-player`
+  (the APK-missing ones) were invisible. Keep it visible until you've
+  seen a successful playback at least once.
+
+Other voice triggers (not done, can be added later):
+- "manorama" → launch browser to the live URL.
+- "cctv" → HA dashboard → camera view.
 - Google Assistant already handles "open youtube", alarms, reminders.
 
 ### Phase 4 — HA Core on `.230` (~90 min) ⏳ TODO

@@ -57,9 +57,10 @@ on PATH (but one exists at `~/toolchains/go/bin/go` — used by picoclaw).
   - ✅ **Phase 1** — Mosquitto up on `.230:1883`, LAN-reachable.
   - ✅ **Phase 2** — wabot intercom bridge live. Voice note from owner →
     cached + HTTP-served at `:8766` + MQTT-published to `intercom/play`.
-    Verified end-to-end 2026-11-17.
-  - ⏳ **Phase 3** — Tasker profile on the phone to auto-play the URL.
-    Blocked on clicking through the phone UI.
+  - ✅ **Phase 3** — Termux subscriber on the wall phone (`~/intercom.sh`,
+    boot hook at `~/.termux/boot/intercom`). Played a WhatsApp voice
+    note on the wall-phone speaker 2026-11-18. Tasker was skipped —
+    the free MQTT-plugin landscape was grim and Termux was leaner.
   - ⏳ **Phase 4** — Home Assistant Core on `.230` for dashboard +
     camera + mobile companion. Low-RAM config pinned in the plan file.
 
