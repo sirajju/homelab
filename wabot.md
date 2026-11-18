@@ -82,6 +82,7 @@ string start with `owner:` and the menu does the right thing automatically.
 - `!send <phone> <text>` — DM any phone from the bot number.
 - `!broadcast <text>` — DM all contacts (rate-limited).
 - `!label <mac> <name> [owner]` — Rename a device in wifi-presence.
+- `!cctv` / `!cam` / `!snap` — Snapshot from the wall-phone camera (via IP Webcam). Wakes the camera on-demand via MQTT, grabs the shot, shuts it off.
 - `!block <phone>` / `!unblock <phone>` — Blocklist.
 - `!restart`, `!sh <cmd>`, `!shutdown`.
 

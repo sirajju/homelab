@@ -3,9 +3,10 @@
 A rooted Redmi Note 10 (crDroid) sticks to the wall and becomes a home
 assistant.
 
-**Progress:** Phases 1 + 2 + 3 done. Intercom pipeline works end-to-end
-— WhatsApp voice note → wabot → MQTT → **wall-phone speaker**. Phase 4
-(HA Core) is the remaining work.
+**Progress:** Phases 1 + 2 + 3 + 5 done. Intercom (voice note from
+anywhere → wall-phone speaker) and on-demand CCTV (WhatsApp `!cctv` →
+snapshot in chat, camera idle rest of the time) both work end-to-end.
+Phase 4 (HA Core) is the remaining work.
 
 Instead of Tasker + an MQTT plugin (the free Play Store landscape was
 grim and the user wasn't buying a paywalled plugin for day one), we
@@ -328,6 +329,72 @@ Other voice triggers (not done, can be added later):
 - "manorama" → launch browser to the live URL.
 - "cctv" → HA dashboard → camera view.
 - Google Assistant already handles "open youtube", alarms, reminders.
+
+### Phase 5 — On-demand CCTV ✅ DONE 2026-11-18
+
+User asked for the camera **not** to run idle. The flow now: `!cctv`
+tells the phone to start IP Webcam, polls until it responds, grabs a
+snapshot, tells the phone to stop IP Webcam. Shares the same MQTT
+broker as intercom; no second connection.
+
+Phone side (`~/cam-control.sh`):
+
+```bash
+#!/data/data/com.termux/files/usr/bin/bash
+BROKER=192.168.1.230
+USER=wallphone
+PASSWORD=<same as intercom>
+TOPIC=cctv/control
+CAM_PKG=com.pas.webcam
+
+termux-wake-lock
+trap 'termux-wake-unlock; exit' INT TERM
+
+while true; do
+  mosquitto_sub -h "$BROKER" -u "$USER" -P "$PASSWORD" -t "$TOPIC" 2>&1 \
+  | while read -r line; do
+      action=$(echo "$line" | jq -r '.action' 2>/dev/null)
+      case "$action" in
+        start) su -c "am start -n $CAM_PKG/.Rolling" >/dev/null 2>&1 ;;
+        stop)  su -c "am force-stop $CAM_PKG" >/dev/null 2>&1 ;;
+      esac
+    done
+  sleep 5
+done
+```
+
+Boot hook (`~/.termux/boot/02-cam-control`):
+
+```bash
+#!/data/data/com.termux/files/usr/bin/bash
+termux-wake-lock
+sleep 15
+exec ~/cam-control.sh > ~/cam-control.log 2>&1
+```
+
+Server side: wabot exposes a `Bridge.Publish(topic, payload)` method on
+the intercom module so the `!cctv` command can reuse the broker
+connection. `internal/commands/cctv.go` publishes `{"action":"start"}`,
+HEAD-polls `CCTV_URL` every 500ms until it returns 2xx (or
+`CCTV_START_TIMEOUT` elapses, default 20s), grabs the snapshot, uploads
+it via whatsmeow's image-upload helper, then publishes
+`{"action":"stop"}`.
+
+New env on `.230`:
+
+```
+CCTV_URL=http://192.168.1.231:8080/shot.jpg
+CCTV_USER=...
+CCTV_PASSWORD=...
+CCTV_TIMEOUT=15s
+CCTV_CONTROL_TOPIC=cctv/control
+CCTV_START_TIMEOUT=20s
+CCTV_AUTO_STOP=on
+```
+
+The old `~/.termux/boot/00-cctv` (start IP Webcam at boot) was deleted;
+with on-demand control it's counter-productive. The phone boots cold
+and only wakes the camera when `!cctv` arrives.
 
 ### Phase 4 — HA Core on `.230` (~90 min) ⏳ TODO
 

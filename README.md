@@ -63,8 +63,13 @@ on PATH (but one exists at `~/toolchains/go/bin/go` — used by picoclaw).
     across reboots 2026-11-18: WhatsApp voice note plays on the
     speaker with no user interaction. Tasker was skipped — the free
     MQTT-plugin landscape was grim and Termux was leaner.
+  - ✅ **Phase 5** — On-demand CCTV via `!cctv` on WhatsApp. wabot
+    publishes `start` on `cctv/control`, phone's `~/cam-control.sh`
+    launches IP Webcam via `am start`, wabot polls until the snapshot
+    URL answers, grabs the shot, publishes `stop`. Camera is idle
+    99% of the time. Verified 2026-11-18.
   - ⏳ **Phase 4** — Home Assistant Core on `.230` for dashboard +
-    camera + mobile companion. Low-RAM config pinned in the plan file.
+    mobile companion + camera card. Low-RAM config pinned in the plan.
 
 ## Known gotchas (things that broke before)
 
