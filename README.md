@@ -76,9 +76,15 @@ on PATH (but one exists at `~/toolchains/go/bin/go` — used by picoclaw).
     Shipped 2026-11-21 (`f395b07`).
   - ✅ **Phase 4** — Home Assistant Core on `.230`. Internal + external
     (Tailscale) URLs wired, MQTT bridged with Mosquitto, Generic Camera
-    via IP Webcam, Met.no weather, custom "Wall" dashboard, Mobile
-    Companion app push notifications via FCM. Full install walkthrough
-    + every gotcha we hit in the plan file. 2026-11-21.
+    via IP Webcam, Met.no weather, Home + Admin dashboards (Admin has
+    live camera, LAN devices, server-health card, CCTV wake/sleep
+    buttons), arrival/departure automation → Companion app push via
+    FCM. Full install walkthrough + every gotcha we hit in the plan
+    file. 2026-11-21.
+  - 🚧 **Phase 4b — wall-phone kiosk front-end.** Fully Kiosk Browser
+    ruled out (paywall + HA chrome leaks). Leaning toward a static
+    HTML page served from HA's `www/` that calls HA REST for the
+    intercom / call-me / assistant buttons. See wall-phone-plan.md § 4.12.
 
 ## Known gotchas (things that broke before)
 

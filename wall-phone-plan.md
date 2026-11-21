@@ -3,10 +3,13 @@
 A rooted Redmi Note 10 (crDroid) sticks to the wall and becomes a home
 assistant.
 
-**Progress:** Phases 1 + 2 + 3 + 5 done. Intercom (voice note from
-anywhere → wall-phone speaker) and on-demand CCTV (WhatsApp `!cctv` →
-snapshot in chat, camera idle rest of the time) both work end-to-end.
-Phase 4 (HA Core) is the remaining work.
+**Progress:** Phases 1 + 2 + 3 + 4 + 5 done. Intercom (voice note from
+anywhere → wall-phone speaker), on-demand CCTV (`!cctv` → snapshot,
+`!cctv on N` → MJPEG for N seconds) and HA Core on `.230` (Home + Admin
+dashboards, arrival/departure Companion push, system-health card on
+Admin) all live. **Remaining:** the wall-phone kiosk front-end —
+Fully Kiosk ruled out because of license + HA chrome leaking through;
+leaning toward a static HTML page served from HA's `www/`. See 4.12.
 
 Instead of Tasker + an MQTT plugin (the free Play Store landscape was
 grim and the user wasn't buying a paywalled plugin for day one), we
@@ -642,68 +645,141 @@ is enough.
 Creates `weather.home`. If Met.no doesn't cover your region well,
 **Open-Meteo** works the same way with no key.
 
-#### 4.11 Wall dashboard
+#### 4.11 Two dashboards: Home (wall phone) and Admin (office)
 
-**Settings → Dashboards → Add Dashboard:**
-- Title: `Wall`
-- Icon: `mdi:television-ambient-light`
-- Show in sidebar: on
+We ended up splitting into two dashboards instead of one "Wall" because
+the wall phone shouldn't expose camera feeds or system internals to
+whoever walks by — the family-facing screen stays simple, the admin
+screen has the full toolbox.
 
-Edit (top-right ⋮ → Edit Dashboard → + Add Card), build these in
-order:
+**Home dashboard** (`/dashboard-home` → fed to Fully Kiosk):
+- Settings → Dashboards → Add → Title: `Home`, URL path: `home`,
+  Icon: `mdi:home`. Show in sidebar: on.
+- Big clock Markdown card (same template as before: `# {{ now().strftime('%H:%M') }}`).
+- Intercom button (one-tap `mqtt.publish` on `intercom/play` with a
+  pre-canned "voice note is waiting" audio URL — placeholder script
+  `script.intercom_from_me`).
+- Assistant launcher button (opens Manorama News / YouTube — Fully Kiosk
+  URL action).
+- "Call me" button (`mqtt.publish` → `household/ping` → wabot DMs the
+  first owner: `📞 Someone at home is calling you`). See household
+  module in wabot.md.
 
-1. **Picture Entity** → `camera.wall_phone` (tap-action: more-info).
-2. **Entities** titled "Who's home" → `sensor.home_count`,
-   `sensor.away_count`, `person.<you>`.
-3. **Weather Forecast** → `weather.home` (daily).
-4. **Markdown** titled "Clock":
-   ```
-   # {{ now().strftime('%H:%M') }}
-   ### {{ now().strftime('%A, %d %B') }}
-   ```
-5. (optional) **Entities** titled "Quick" with scripts for one-tap
-   `!cctv on 120`, `!intercom off`, etc. Build the scripts later via
-   **Settings → Scripts → + Add Script → (name: `cctv_on_120`,
-   service: `mqtt.publish`, data: `topic: cctv/control, payload:
-   {"action":"start"}`)**.
+**Admin dashboard** (`/dashboard-admin` → office use, Tailscale):
+- Title: `Admin`, URL path: `admin`, Icon: `mdi:shield-crown`.
+- **Live camera** — Picture Entity → `camera.wall_phone` (tap-action:
+  more-info). Only live when `!cctv on` has been fired.
+- **LAN devices** — Markdown card:
+  ```
+  ## LAN devices (home right now)
+  {% set home = state_attr('sensor.lan_devices', 'home') or [] %}
+  {% set away = state_attr('sensor.lan_devices', 'away') or [] %}
+  {% for d in home %}
+  - **{{ d.label or d.hostname or d.mac }}** — {{ d.last_ip }} — {{ d.vendor }}
+  {% endfor %}
+  {% if home | count == 0 %}_nobody home_{% endif %}
+  _{{ home | count }} home • {{ away | count }} away_
+  ```
+  (The `or []` fallback matters — before the REST sensor's first fetch,
+  the attributes are `None` and `| count` raises `TypeError`.)
+- **Server health** — Entities card:
+  ```yaml
+  type: entities
+  title: Server health (.230)
+  show_header_toggle: false
+  entities:
+    - entity: sensor.system_monitor_processor_use
+      name: CPU
+    - entity: sensor.system_monitor_load_1_min
+      name: Load (1m)
+    - entity: sensor.system_monitor_memory_usage
+      name: RAM used
+    - entity: sensor.system_monitor_disk_usage
+      name: Disk /
+    - entity: sensor.system_monitor_processor_temperature
+      name: CPU temp
+    - entity: sensor.system_monitor_uptime
+      name: Uptime
+  ```
+  In HA 2026.11 the System Monitor entities are prefixed
+  `system_monitor_` and **most are auto-disabled** by the integration.
+  Enable them via Settings → Devices → System Monitor → check the
+  entities you want. Or edit `.storage/core.entity_registry` and clear
+  `disabled_by` for the IDs you need (stop HA first, then restart).
+- **CCTV wake / sleep** — Horizontal stack of two Button cards firing
+  `script.cctv_wake_60s` and `script.cctv_sleep`
+  (both are `mqtt.publish` to `cctv/control`).
 
-URL to feed Fully Kiosk: `http://192.168.1.230:8123/wall`
-(or, off-LAN via Tailscale: `http://100.99.232.45:8123/wall`).
+URLs to feed into things:
+- Fully Kiosk on the wall phone: `http://192.168.1.230:8123/dashboard-home/0`
+- Office browser (Tailscale): `http://100.99.232.45:8123/dashboard-admin/0`
 
-#### 4.12 Fully Kiosk on the wall phone
+#### 4.12 Wall-phone kiosk — TBD, Fully Kiosk ruled out
 
-- Play Store → install **Fully Kiosk Browser** (~₹900 lifetime unlock).
-- Settings:
-  - **Start URL:** `http://192.168.1.230:8123/wall`
-  - **Keep screen on while plugged in:** on
-  - **Prevent sleep:** on
-  - **Hide system bars:** on (full-screen)
-  - **Auto reload interval:** 30 min
-- Android Settings → Apps → Fully Kiosk → Battery → **Unrestricted**.
-- Set Fully Kiosk as the **default launcher** so the wall phone boots
-  straight to it (optional but makes it feel more appliance-like).
+Fully Kiosk Browser was the original plan but its ₹900 lifetime unlock
+is paywalled to a license, and even with the license HA's sidebar +
+header leak through — the wall phone should look like an appliance,
+not a web app. Replacing with one of:
 
-#### 4.13 Arrival / departure notification
+1. **Static HTML served from HA's `www/` folder.** Build
+   `/srv/homeassistant/.homeassistant/www/kiosk.html` — hand-rolled
+   clock + buttons that POST to HA REST API via a long-lived token.
+   Zero HA chrome, pixel-perfect. Browser on the wall phone (any —
+   Chrome, Brave, Mi Browser) in fullscreen / add-to-home-screen.
+2. **HACS `kiosk-mode` plugin.** Keeps the HA dashboard editor, adds
+   `?kiosk` URL param that hides sidebar + header. Needs HACS first.
+3. **WallPanel** app (free, open-source) in place of Fully Kiosk —
+   but still shows whatever the URL shows, so needs #1 or #2 on top.
 
-**Settings → Automations & Scenes → + Create Automation → Create new**:
+Current direction: option 1. The HTML page lives in HA's `www/`,
+served at `http://192.168.1.230:8123/local/kiosk.html`. Browser needs
+to log in to HA once; session persists. Buttons call HA REST (`POST
+/api/services/mqtt/publish`) with a token baked in.
 
-- **Name:** `Arrival / departure notification`
-- **Trigger:** State → entity `person.<you>` (or
-  `device_tracker.<phone>` if the `person` entity hasn't been created
-  yet). Leave From/To blank — we branch in the action.
-- **Action:** Call a service / Perform an action:
-  - **Service:** `notify.mobile_app_<your_phone>`
-  - **Data (YAML):**
-    ```yaml
-    title: "{{ 'You left home' if trigger.to_state.state == 'not_home' else 'Welcome home' }}"
-    message: >
-      {{ trigger.from_state.state }} → {{ trigger.to_state.state }}
-      at {{ now().strftime('%H:%M') }}
-    ```
+To be written. See notes at the end of this file when it lands.
 
-Toggle **on**. Test via Developer Tools → States → set
-`device_tracker.<phone>` to `not_home` then `home` (reverts after real
-state update).
+#### 4.13 Arrival / departure notification ✅ 2026-11-21
+
+Done as two YAML automations (one for arrive, one for leave) in
+`/srv/homeassistant/.homeassistant/automations.yaml` — cleaner than a
+single if/else and shows up as two toggles in the UI:
+
+```yaml
+- id: arrival_sirajju
+  alias: "Arrival — Sirajju"
+  mode: single
+  triggers:
+    - trigger: state
+      entity_id: person.sirajju
+      to: home
+  actions:
+    - action: notify.mobile_app_i2219
+      data:
+        title: "Welcome home"
+        message: "You just arrived at home ({{ now().strftime('%H:%M') }})"
+        data: { tag: presence-arrive, channel: Presence }
+
+- id: departure_sirajju
+  alias: "Departure — Sirajju"
+  mode: single
+  triggers:
+    - trigger: state
+      entity_id: person.sirajju
+      from: home
+  actions:
+    - action: notify.mobile_app_i2219
+      data:
+        title: "Left home"
+        message: "You just left home ({{ now().strftime('%H:%M') }})"
+        data: { tag: presence-leave, channel: Presence }
+```
+
+After editing: Developer Tools → YAML → **Reload Automations** (or hit
+the "Reload" dot on Settings → Automations). No full HA restart.
+
+Test via Developer Tools → States → set `person.sirajju` to
+`not_home` then `home` (temporary override — reverts once the
+Companion app reports real state).
 
 #### 4.14 Gotchas captured all in one place
 
