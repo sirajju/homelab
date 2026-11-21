@@ -79,6 +79,8 @@ wabot env | path         # inspect config paths
 | `MONITOR_LOAD_MULT=2.0` | Alert when 1-min load > ncpu × this |
 | `MONITOR_TEMP_C=75` | Alert when CPU temp (°C) > this |
 | `MONITOR_COOLDOWN=30m` | Minimum gap between repeat alerts |
+| `INTERCOM_TLS_CERT` | PEM cert file. When set with `INTERCOM_TLS_KEY`, the intercom HTTP server runs HTTPS instead of HTTP (needed so browsers hand out mic permission to the kiosk mic page). |
+| `INTERCOM_TLS_KEY` | PEM key file (pair with the cert above). |
 
 ## Commands
 
@@ -104,6 +106,21 @@ string start with `owner:` and the menu does the right thing automatically.
 - `!cctv off` — Cancel the live timer + stop the camera immediately.
 - `!block <phone>` / `!unblock <phone>` — Blocklist.
 - `!restart`, `!sh <cmd>`, `!shutdown`.
+
+### Dashboard-side features (HTTP endpoints)
+
+- **`POST /voice-from-home`** on the intercom HTTP server. Receives a
+  browser-recorded audio blob (MediaRecorder; `audio/webm;codecs=opus`
+  by default), ffmpeg-transcodes to ogg/opus at 48 kHz mono with
+  `-application voip`, ffprobe-stamps the duration, uploads via
+  whatsmeow, and sends to `Owners[0]` as a WhatsApp PTT voice note.
+  CORS set to `*` so the mic page can POST from the HA origin.
+  Served over HTTPS when `INTERCOM_TLS_CERT`/`INTERCOM_TLS_KEY` are
+  set (we use the Tailscale cert — see wall-phone-plan.md § 4.14).
+- **`GET /mic` and `GET /mic.html`** serve an embedded voice-recorder
+  HTML page. Not used by the wall phone (the dashboard button points
+  at HA's `/local/mic.html` instead, same origin as the dashboard
+  keeps the WebView happy), but handy for testing in a bare browser.
 
 ### Background jobs (not commands — things wabot does on its own)
 

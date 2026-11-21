@@ -5,11 +5,12 @@ assistant.
 
 **Progress:** Phases 1 + 2 + 3 + 4 + 5 done. Intercom (voice note from
 anywhere → wall-phone speaker), on-demand CCTV (`!cctv` → snapshot,
-`!cctv on N` → MJPEG for N seconds) and HA Core on `.230` (Home + Admin
-dashboards, arrival/departure Companion push, system-health card on
-Admin) all live. **Remaining:** the wall-phone kiosk front-end —
-Fully Kiosk ruled out because of license + HA chrome leaking through;
-leaning toward a static HTML page served from HA's `www/`. See 4.12.
+`!cctv on N` → MJPEG for N seconds), HA Core on `.230` (Home + Admin
+dashboards, arrival/departure Companion push, system-health card),
+WallPanel on the wall phone with HA chrome stripped, and
+**voice-from-home** (wall-phone mic → WhatsApp PTT voice note) are all
+live. The full HTTPS story (Tailscale cert on both HA and wabot) and a
+patched WallPanel APK are documented in 4.12 and 4.14.
 
 Instead of Tasker + an MQTT plugin (the free Play Store landscape was
 grim and the user wasn't buying a paywalled plugin for day one), we
@@ -794,7 +795,109 @@ Test via Developer Tools → States → set `person.sirajju` to
 `not_home` then `home` (temporary override — reverts once the
 Companion app reports real state).
 
-#### 4.14 Gotchas captured all in one place
+#### 4.14 Voice-from-home (wall-phone → WhatsApp voice note) ✅ 2026-11-21
+
+A purple mic button on the wall-view dashboard records a voice note at
+the wall phone and delivers it to the first owner as a proper WhatsApp
+PTT bubble. End-to-end flow:
+
+```
+  WallPanel on .231                 wabot on .230
+  ────────────────                  ──────────────
+  Dashboard mic button
+       │ tap_action: url  /local/mic.html
+       ▼
+  mic.html (served by HA) ──POST──► POST /voice-from-home
+   MediaRecorder opus         raw   ffmpeg → ogg/opus/48k mono
+   preview + Send                  ffprobe → Seconds
+                                   cli.Upload → WhatsApp CDN
+                                   SendMessage AudioMessage{PTT:true}
+                                                   │
+                                                   ▼
+                                           owner's WhatsApp
+```
+
+Three surprises along the way, in order of pain:
+
+1. **Browsers refuse `getUserMedia` without a secure context.** HA on
+   plain `http://192.168.1.230:8123` — even with your personal phone's
+   Brave flagged for insecure-origin-as-secure — won't surface a mic
+   prompt. The secure-context rule is baked into WebView itself. Fix is
+   real HTTPS.
+
+2. **HA 2026.11 moved `http:` config to `.storage/http`.** Adding
+   `ssl_certificate` + `ssl_key` to `configuration.yaml` does **nothing**
+   — the storage file carries `yaml_migration_done: true` and the YAML
+   keys are silently ignored. There's no log line about it. Fix is to
+   edit `.storage/http` directly and inject the SSL fields into the
+   `stable` block, then restart HA. Setting `ssl_profile: "modern"`
+   fails with `'modern' is not a valid SSLProfile` — the storage expects
+   the enum value string `intermediate_v6` or `modern_v6`.
+
+3. **WallPanel's own WebView has a broken permission bridge.** Even on
+   real HTTPS, the mic prompt never fires inside WallPanel. The upstream
+   `InternalWebChromeClient.onPermissionRequest` passes WebKit resource
+   strings like `android.webkit.resource.AUDIO_CAPTURE` to
+   `ContextCompat.checkSelfPermission`, which only accepts Android
+   permission strings → check always fails → silent deny. Nothing in
+   `BrowserActivityNative` catches `onRequestPermissionsResult` either.
+   The upstream is archived, so patched in a fork and rebuilt.
+
+**Solution stack (all in place):**
+
+- **Tailscale HTTPS cert.** `tailscale cert sirajju.tail7dc29c.ts.net`
+  on `.230` writes a real Let's Encrypt cert (CN = your tailnet
+  hostname, issuer = Let's Encrypt). Cert + key live at
+  `~/whatsapp-bot-with-ai/certs/sirajju.tail7dc29c.ts.net.{crt,key}`
+  with a copy at `/srv/homeassistant/.homeassistant/certs/` owned by
+  the `homeassistant` user. Auto-renews via `tailscaled`.
+- **HA HTTPS on 8123.** Patched `.storage/http` adds `ssl_certificate`
+  and `ssl_key`. `configuration.yaml` sets `internal_url` and
+  `external_url` to `https://sirajju.tail7dc29c.ts.net:8123`. WallPanel
+  launch URL switched to the tailnet HTTPS one.
+- **Wabot HTTPS on 8766.** `INTERCOM_TLS_CERT` / `INTERCOM_TLS_KEY` env
+  vars point at the same cert; `intercom.go` calls `ServeTLS`. Embedded
+  `/mic` route serves the same `mic.html` wabot-side, but for the
+  dashboard button we use HA's `/local/mic.html` so the browser is on
+  the same origin as the parent dashboard (WebView grants permission
+  per-origin; staying on the HA origin keeps permission granted).
+- **Mic page at HA `/local/mic.html`.** ~200-line static HTML, dark
+  kiosk theme, MediaRecorder + preview + Send. POSTs the blob to
+  `https://sirajju.tail7dc29c.ts.net:8766/voice-from-home` (wabot). The
+  endpoint has CORS set `*`; no mixed content since both sides are
+  HTTPS on the same tailnet hostname.
+- **Wabot POST `/voice-from-home` → WhatsApp PTT.** `ffmpeg` transcode:
+  `-vn -c:a libopus -b:a 32k -ar 48000 -ac 1 -application voip`. The
+  `voip` Opus mode and the 48 kHz re-encode matter — a minimal
+  re-encode would leave WhatsApp able to *display* but not *play* the
+  clip. `ffprobe` fills `AudioMessage.Seconds` so the progress bar
+  knows a duration; without it some clients refuse to start playback.
+  Then `cli.Upload` → `SendMessage` with `PTT: true` → owner's chat.
+- **Patched WallPanel APK.** Fork at
+  https://github.com/sirajju/wallpanel-android (branch
+  `feat/mic-permission-bridge`). One-line fix in
+  `InternalWebChromeClient.kt`:
+  ```kotlin
+  override fun onPermissionRequest(request: PermissionRequest?) {
+      request?.grant(request.resources)
+  }
+  ```
+  Android's `RECORD_AUDIO` / `CAMERA` / `MICROPHONE` manifest
+  declarations still gate access at the OS level — we just stopped
+  lying to WebKit about them. Firebase/Crashlytics stripped so the
+  build doesn't need a `google-services.json`.
+  Build: `./gradlew assembleProdDebug`. APK lives at
+  `https://sirajju.tail7dc29c.ts.net:8123/local/wallpanel-patched.apk`.
+  Install: download in Brave on the wall phone, uninstall the
+  Play-Store WallPanel first (debug cert won't upgrade in place),
+  sideload the APK, re-enter the launch URL and MQTT creds.
+
+**Companion app on personal phone** stays working because HA Companion
+treats its configured HA URL as a trusted origin for mic — the mic
+page now lives on the same HA origin, so Companion grants the prompt
+normally.
+
+#### 4.15 Gotchas captured all in one place
 
 - **"59 MB free" was router RAM, not server.** Server has 2.8 GB
   available. Ignore any old note suggesting otherwise.
@@ -813,6 +916,25 @@ Companion app reports real state).
   tends to work best. For on-demand use, stream is irrelevant.
 - **Companion drops FCM push after a day** when Android battery
   optimization kills it. Set Companion to Unrestricted battery.
+- **HA 2026.11 ignores YAML `http.ssl_certificate`.** It migrated to
+  `.storage/http` with `yaml_migration_done: true` and silently drops
+  YAML keys for the http component. Edit the storage file. Don't look
+  in the log for a hint — there isn't one.
+- **`.storage/http`'s `ssl_profile` wants the enum value.** `modern`
+  and `intermediate` raise `ValueError: 'modern' is not a valid
+  SSLProfile`. Use `intermediate_v6` or `modern_v6`.
+- **Browsers won't fire mic prompt on HTTP, period.** Even with
+  Chrome/Brave's insecure-origin flag, Android WebView (which is what
+  WallPanel and Companion use) ignores it. Secure context is mandatory
+  for `getUserMedia`. Get HTTPS before anything else.
+- **WallPanel upstream's `onPermissionRequest` is broken.** Treats
+  WebKit resource strings as Android permission strings. Dashboards
+  that use `getUserMedia` get a silent deny. Fix is one line in the
+  fork; patched APK lives at `/local/wallpanel-patched.apk` on HA.
+- **Browser-recorded webm/opus plays only after a full re-encode.** A
+  minimal `-c:a copy` leaves WhatsApp able to display the voice bubble
+  but not play it. Re-encode at 48 kHz mono with `-application voip`
+  and stamp `AudioMessage.Seconds` via ffprobe.
 
 ```sh
 sudo apt install -y python3-dev python3-venv libffi-dev libssl-dev \

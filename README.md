@@ -32,7 +32,7 @@ future-me — short, concrete, current.
 | Where | What | How it runs | Notes |
 |---|---|---|---|
 | **192.168.1.230** | wa-bot | `wabot.service` (user systemd) | WhatsApp bot, Go + whatsmeow. See [wabot.md](./wabot.md). Also runs the intercom bridge (`:8766`) and the system health monitor (DMs owner on cpu/ram/disk/temp thresholds). |
-| **192.168.1.230** | Home Assistant Core | `home-assistant.service` (system systemd) | `:8123`. venv at `/srv/homeassistant`, config at `/srv/homeassistant/.homeassistant`. Mobile Companion-driven push notifications via FCM, MQTT bridged with Mosquitto, Generic Camera via IP Webcam, Met.no weather, custom Wall dashboard. ~400 MB RSS. |
+| **192.168.1.230** | Home Assistant Core | `home-assistant.service` (system systemd) | HTTPS on `:8123`, using the Tailscale Let's Encrypt cert at `/srv/homeassistant/.homeassistant/certs/sirajju.tail7dc29c.ts.net.{crt,key}`. venv at `/srv/homeassistant`, config at `/srv/homeassistant/.homeassistant`. **Gotcha: HA 2026.11 moved http config to `.storage/http` and ignores YAML `ssl_certificate` / `ssl_key` — SSL must be set in storage.** Mobile Companion push via FCM, MQTT bridged with Mosquitto, Generic Camera, Met.no weather, Home + Admin dashboards. ~400 MB RSS. |
 | **192.168.1.230** | wifi-presence | `presence.service` (user systemd) | LAN presence tracker, Go. Hostnames now land from `/captcha/leases`. See [wifi-presence.md](./wifi-presence.md). |
 | **192.168.1.230** | Mosquitto | `mosquitto.service` (system) | MQTT broker, `:1883` on `0.0.0.0`. Users: `wabot`, `wallphone`, `ha`. Password file **must** be owned by the `mosquitto` service user. |
 | **192.168.1.230** | AdGuard Home | binary daemon | DNS filtering, upstream = router. Was on `.7`, moved to `.230`. |
@@ -87,8 +87,20 @@ on PATH (but one exists at `~/toolchains/go/bin/go` — used by picoclaw).
     with a 90-line `www/kiosk-chrome.js` loaded via
     `frontend.extra_module_url` that hides HA chrome when
     `?kiosk=1` is on the URL. WallPanel app on the wall phone,
-    pointed at `http://.230:8123/dashboard-wall/0?kiosk=1`. Same
-    editable dashboard, zero HA chrome on the wall.
+    pointed at `https://sirajju.tail7dc29c.ts.net:8123/wall-view/0?kiosk=1`.
+    Same editable dashboard, zero HA chrome on the wall.
+  - ✅ **Phase 4c — voice-from-home + real HTTPS everywhere.** 2026-11-21.
+    Both HA (8123) and wabot (8766) now serve HTTPS using a single
+    Let's Encrypt cert issued by `tailscale cert`. A purple mic button
+    on wall-view opens `/local/mic.html` which records via
+    MediaRecorder and POSTs to wabot's new `POST /voice-from-home`
+    endpoint; wabot ffmpeg-transcodes to ogg/opus/48k/mono with
+    `-application voip`, probes duration via ffprobe, and sends the
+    clip to owner[0] as a WhatsApp PTT voice note. WallPanel's own
+    WebView permission bridge was broken (upstream archived), so
+    patched the fork at `github.com/sirajju/wallpanel-android`
+    (branch `feat/mic-permission-bridge`) and the resulting APK lives
+    at `/local/wallpanel-patched.apk` on HA for sideload.
 
 ## Known gotchas (things that broke before)
 
