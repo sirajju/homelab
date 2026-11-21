@@ -931,6 +931,7 @@ normally.
   WebKit resource strings as Android permission strings. Dashboards
   that use `getUserMedia` get a silent deny. Fix is one line in the
   fork; patched APK lives at `/local/wallpanel-patched.apk` on HA.
+- **WallPanel debug build overwrites settings on every startup.** Upstream `BrowserActivityNative.kt` had an `if (BuildConfig.DEBUG)` block that unconditionally reset `appLaunchUrl`, `mqttBroker`, and credentials to `BuildConfig` constants. In `prodDebug` builds, these constants were empty strings, wiping the dashboard URL and MQTT config on every cold launch. Fix: stripped the `if (BuildConfig.DEBUG)` block in the fork (`0b5caf9`).
 - **Browser-recorded webm/opus plays only after a full re-encode.** A
   minimal `-c:a copy` leaves WhatsApp able to display the voice bubble
   but not play it. Re-encode at 48 kHz mono with `-application voip`
