@@ -81,10 +81,14 @@ on PATH (but one exists at `~/toolchains/go/bin/go` — used by picoclaw).
     buttons), arrival/departure automation → Companion app push via
     FCM. Full install walkthrough + every gotcha we hit in the plan
     file. 2026-11-21.
-  - 🚧 **Phase 4b — wall-phone kiosk front-end.** Fully Kiosk Browser
-    ruled out (paywall + HA chrome leaks). Leaning toward a static
-    HTML page served from HA's `www/` that calls HA REST for the
-    intercom / call-me / assistant buttons. See wall-phone-plan.md § 4.12.
+  - ✅ **Phase 4b — wall-phone kiosk.** 2026-11-21. Fully Kiosk ruled
+    out (paywall) and HACS is actively blocked by HA 2026.11 (it
+    deletes `custom_components/hacs/` by name on startup). Replaced
+    with a 90-line `www/kiosk-chrome.js` loaded via
+    `frontend.extra_module_url` that hides HA chrome when
+    `?kiosk=1` is on the URL. WallPanel app on the wall phone,
+    pointed at `http://.230:8123/dashboard-wall/0?kiosk=1`. Same
+    editable dashboard, zero HA chrome on the wall.
 
 ## Known gotchas (things that broke before)
 

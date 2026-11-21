@@ -714,29 +714,42 @@ URLs to feed into things:
 - Fully Kiosk on the wall phone: `http://192.168.1.230:8123/dashboard-home/0`
 - Office browser (Tailscale): `http://100.99.232.45:8123/dashboard-admin/0`
 
-#### 4.12 Wall-phone kiosk — TBD, Fully Kiosk ruled out
+#### 4.12 Wall-phone kiosk ✅ 2026-11-21
 
-Fully Kiosk Browser was the original plan but its ₹900 lifetime unlock
-is paywalled to a license, and even with the license HA's sidebar +
-header leak through — the wall phone should look like an appliance,
-not a web app. Replacing with one of:
+Fully Kiosk Browser is ruled out — ₹900 paywall, and even with the
+license HA's sidebar + title bar leak through. HACS is also dead:
+**HA 2026.11 deletes `custom_components/hacs/` on every startup by
+directory name** (verified: identical contents named `hacs_renamed/`
+survived, `hacs/` always wiped — no log entry, silent). That takes the
+`kiosk-mode` HACS plugin off the table too.
 
-1. **Static HTML served from HA's `www/` folder.** Build
-   `/srv/homeassistant/.homeassistant/www/kiosk.html` — hand-rolled
-   clock + buttons that POST to HA REST API via a long-lived token.
-   Zero HA chrome, pixel-perfect. Browser on the wall phone (any —
-   Chrome, Brave, Mi Browser) in fullscreen / add-to-home-screen.
-2. **HACS `kiosk-mode` plugin.** Keeps the HA dashboard editor, adds
-   `?kiosk` URL param that hides sidebar + header. Needs HACS first.
-3. **WallPanel** app (free, open-source) in place of Fully Kiosk —
-   but still shows whatever the URL shows, so needs #1 or #2 on top.
+Replacement that actually works — pure HA config, no third-party
+plugin store:
 
-Current direction: option 1. The HTML page lives in HA's `www/`,
-served at `http://192.168.1.230:8123/local/kiosk.html`. Browser needs
-to log in to HA once; session persists. Buttons call HA REST (`POST
-/api/services/mqtt/publish`) with a token baked in.
+1. **`www/kiosk-chrome.js`** — ~90-line JS module that walks every
+   HA shadow root and injects CSS hiding `app-header`, `ha-sidebar`,
+   `ha-top-app-bar-fixed`, view tabs, edit pencil, kebab, hamburger,
+   and the dashboard title bar. Gated on URL param `?kiosk=1` so the
+   same dashboard still edits normally when loaded without the flag.
+   Uses a `MutationObserver` so view swaps pick the styles up fast.
 
-To be written. See notes at the end of this file when it lands.
+2. **Register it in `configuration.yaml`**:
+   ```yaml
+   frontend:
+     extra_module_url:
+       - /local/kiosk-chrome.js
+   ```
+   HA restart required once. Later edits to the JS only need a
+   browser hard-refresh (`Ctrl+Shift+R`) — HA serves `/local/*` with
+   `max-age=2678400`, so the browser caches it for a month otherwise.
+
+3. **WallPanel** (free, open source, Thanksmister) in place of Fully
+   Kiosk on the wall phone. Dashboard URL set to
+   `http://192.168.1.230:8123/dashboard-wall/0?kiosk=1`. Session login
+   persists; full-screen, screen-on, hide-system-bars all in-app.
+
+Same editable HA dashboard, no HA chrome on the wall. Drop `?kiosk=1`
+from the URL to get the edit UI back.
 
 #### 4.13 Arrival / departure notification ✅ 2026-11-21
 
