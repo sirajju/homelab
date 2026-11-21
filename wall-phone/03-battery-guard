@@ -1,0 +1,4 @@
+#!/data/data/com.termux/files/usr/bin/bash
+termux-wake-lock
+sleep 20
+exec ~/battery-guard.sh >/dev/null 2>&1

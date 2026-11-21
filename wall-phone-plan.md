@@ -978,17 +978,32 @@ First boot takes ~2 minutes (wheel caching). After that, ~30 s warm boot.
 Then `configuration.yaml` as above. HA UI at `http://192.168.1.230:8123`,
 Fully Kiosk on the wall points there.
 
-### Phase 5 — polish
+### Phase 5 — polish ✅ DONE 2026-11-21
 
-- "Who's home" dashboard card via `rest:` sensor → wifi-presence
-  `/api/status`. Shows `Siru-s-A13`, `moto-g57-power`, etc. by hostname.
-- Office-side intercom: a tiny PWA that records 10 s audio and POSTs it
-  to wabot's HTTP API (owner token), reusing the same MQTT pipeline but
-  skipping WhatsApp. Faster than typing.
-- Night routine: at 23:00, Fully Kiosk dims screen; alarms in Google
-  Assistant light up the display at wake time.
-- Use Tasker's `Autosync` to pull calendar events / reminders into
-  spoken announcements.
+- **Push-to-Talk (Hold-to-Record) Mic Page:** Redesigned `/local/mic.html`
+  from click-to-record to push-to-talk. Press and hold to speak, release to send
+  immediately, drag finger away (>75px) to cancel, haptic vibrations, automatic
+  error handling.
+- **Background Photo on "Ping Sirajju":** Tapping "Ping sirajju" on the wall-view
+  dashboard wakes IP Webcam in the background (without hiding WallPanel), grabs a
+  snapshot, sleeps the camera, and DMs the photo to Sirajju on WhatsApp with caption
+  `📞 *Someone at home is calling you* — <time>`. If camera fails, falls back to text.
+- **"Who's Home" presence card:** Added to `/wall-view/0` under the Home section
+  reading `sensor.lan_devices`. Displays real-time connected household devices
+  (filtering gateway and wall phone).
+- **Night Screen Dimming & Morning Wake:** Added automations in `automations.yaml`
+  publishing MQTT commands to `wallpanel/mywallpanel/command`:
+  - 23:00: `{"wake": false, "brightness": 5}`
+  - 07:00: `{"wake": true, "brightness": 180}`
+- **Battery Guard (24/7 Power Protection):** Daemon `~/battery-guard.sh` and boot
+  hook `~/.termux/boot/03-battery-guard` on the wall phone. Reads battery capacity
+  via root sysfs (`/sys/class/power_supply/battery/capacity`):
+  - At >= 80%: disables charging (`echo 0 > charging_enabled`).
+  - At <= 70%: enables charging (`echo 1 > charging_enabled`).
+  Protects battery against swelling under 24/7 wall power.
+- **AdGuard DNS Cleanup:** Removed unresponsive IPv6 bootstrap upstreams
+  (`2620:fe::10`, `2620:fe::fe:10`) from `/opt/AdGuardHome/AdGuardHome.yaml` on `.230`,
+  eliminating DNS resolution i/o timeouts.
 
 ## Risks / open questions
 
