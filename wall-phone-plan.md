@@ -396,7 +396,334 @@ The old `~/.termux/boot/00-cctv` (start IP Webcam at boot) was deleted;
 with on-demand control it's counter-productive. The phone boots cold
 and only wakes the camera when `!cctv` arrives.
 
-### Phase 4 — HA Core on `.230` (~90 min) ⏳ TODO
+### Phase 4 — HA Core on `.230` ✅ DONE 2026-11-21
+
+**Purpose:** a dashboard the wall phone can display full-screen, Mobile
+Companion push notifications to your personal phone (from anywhere, via
+Google FCM — doesn't depend on HA being internet-reachable), and a
+growing integration ecosystem to expand into later.
+
+**Prerequisites verified:** `.230` has 3.4 GB RAM / 2.8 GB available /
+3.7 GB swap configured / 43 GB free disk / Python 3.14.4. **The earlier
+"server has only 59 MB free" note in memory was wrong — that was the
+*router*'s 58 MB of RAM, not the server.**
+
+Python 3.14 isn't officially targeted by HA Core (they target 3.12/3.13)
+but 2026.11.2 installed clean on 2026-11-21 with no wheel issues. If a
+future HA release breaks on 3.14, install Python 3.13 via deadsnakes
+PPA and point the venv at it.
+
+#### 4.1 Install HA Core (root required)
+
+```sh
+# 1. System prereqs
+sudo apt update
+sudo apt install -y \
+  python3-dev python3-venv python3-pip \
+  libffi-dev libssl-dev libjpeg-dev zlib1g-dev \
+  autoconf build-essential libopenjp2-7 libturbojpeg0-dev \
+  tzdata ffmpeg
+
+# 2. Service user — note -d sets HOME to /srv/homeassistant
+sudo useradd -rm -d /srv/homeassistant -s /bin/bash homeassistant
+sudo mkdir -p /srv/homeassistant
+sudo chown homeassistant:homeassistant /srv/homeassistant
+
+# 3. Venv + pip install homeassistant (3–5 min; builds wheels)
+sudo -u homeassistant -H bash -c '
+  cd /srv/homeassistant
+  python3 -m venv .
+  source bin/activate
+  pip install --upgrade pip wheel
+  pip install homeassistant
+'
+
+# 4. Sanity check
+sudo -u homeassistant -H /srv/homeassistant/bin/hass --version
+```
+
+#### 4.2 Generate the config dir
+
+```sh
+sudo -u homeassistant -H /srv/homeassistant/bin/hass \
+  --script ensure_config -c /srv/homeassistant/.homeassistant
+```
+
+**Gotcha:** the config dir is `/srv/homeassistant/.homeassistant`, NOT
+`/home/homeassistant/.homeassistant`. `useradd -d /srv/homeassistant`
+set HOME under `/srv/`; if you pass the `/home/...` path to
+`ensure_config` it tries to mkdir inside `/home/` which the
+homeassistant user can't write to.
+
+#### 4.3 `configuration.yaml` at `/srv/homeassistant/.homeassistant/configuration.yaml`
+
+```yaml
+homeassistant:
+  name: Home
+  time_zone: Asia/Kolkata
+  unit_system: metric
+  internal_url: http://192.168.1.230:8123
+  external_url: http://100.99.232.45:8123
+
+default_config:
+
+http:
+  server_port: 8123
+  use_x_forwarded_for: true
+  trusted_proxies:
+    - 127.0.0.1
+    - 100.64.0.0/10   # Tailscale tailnet range
+
+automation: !include automations.yaml
+script: !include scripts.yaml
+scene: !include scenes.yaml
+
+rest:
+  - resource: http://127.0.0.1:8765/api/status
+    scan_interval: 60
+    sensor:
+      - name: "Home Count"
+        value_template: "{{ value_json.counts.home }}"
+      - name: "Away Count"
+        value_template: "{{ value_json.counts.away }}"
+
+recorder:
+  purge_keep_days: 2
+  commit_interval: 30
+  exclude:
+    domains: [updater, sun]
+```
+
+Touch the include files so HA doesn't nag:
+
+```sh
+sudo -u homeassistant touch /srv/homeassistant/.homeassistant/automations.yaml
+sudo -u homeassistant touch /srv/homeassistant/.homeassistant/scripts.yaml
+sudo -u homeassistant touch /srv/homeassistant/.homeassistant/scenes.yaml
+```
+
+**Gotcha — you cannot edit URLs via the UI once YAML has a `homeassistant:`
+key.** Error: *"You cannot change these settings in the UI, as you have
+config stored in configuration.yaml under the homeassistant key."*
+Edit the YAML directly and restart.
+
+**Gotcha — `hass --script check_config` fails from sudo -S.** uv (pip's
+successor) tries to write to `$HOME/uv.toml`, which inherits the
+*caller's* HOME under `sudo -S`, not homeassistant's. Error is
+cosmetic — the live service works fine because systemd sets `HOME=`
+via `User=`. Just don't rely on `check_config` as a pre-start gate.
+
+#### 4.4 Systemd unit at `/etc/systemd/system/home-assistant.service`
+
+```ini
+[Unit]
+Description=Home Assistant
+After=network-online.target
+
+[Service]
+Type=simple
+User=homeassistant
+WorkingDirectory=/srv/homeassistant/.homeassistant
+ExecStart=/srv/homeassistant/bin/hass -c /srv/homeassistant/.homeassistant
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now home-assistant
+```
+
+First boot takes ~60–120 seconds. `systemctl is-active home-assistant`
+→ `active` when ready. `ss -tlnp | grep 8123` shows `0.0.0.0:8123` and
+`[::]:8123`.
+
+#### 4.5 Onboarding (browser)
+
+- Open **http://192.168.1.230:8123** (laptop, same LAN).
+- Create admin account (this is HA's account, separate from `.230`'s
+  Linux login).
+- Set location (or skip; Met.no needs coords, we add that later).
+- Device discovery — skip whatever you don't recognise.
+- Land on **Overview** dashboard.
+- **Turn on Advanced Mode:** click your profile initial (bottom-left
+  sidebar) → scroll to **Advanced Mode** → on. Unlocks Developer Tools
+  and the full settings surface.
+
+**Gotcha — Nabu Casa Cloud trial.** The onboarding flow has a
+"Remote access" toggle that silently enrols you in a 1-month paid
+cloud trial (~$6.50/mo). You don't need it — Tailscale does the same
+job for free. Turn it off in **Settings → Home Assistant Cloud →
+Remote control: off** (or Sign out to end the trial entirely).
+
+#### 4.6 Mosquitto user for HA
+
+Create the `ha` MQTT user and tell HA about it:
+
+```sh
+sudo mosquitto_passwd -b /etc/mosquitto/passwd ha <password>
+sudo systemctl restart mosquitto
+```
+
+In HA: **Settings → Devices & Services → + Add Integration → MQTT**:
+- Broker: `127.0.0.1`
+- Port: `1883`
+- Username: `ha`
+- Password: *(the one you just set)*
+
+HA subscribes to the broker. Confirm by publishing from HA
+("Configure" on the MQTT card → publish `test/hello` → `hi from ha`)
+and subscribing from the server
+(`mosquitto_sub -u wabot -P ... -t 'test/#' -v`) — the message should
+show up.
+
+#### 4.7 Mobile Companion app (personal phone)
+
+- Play Store → install **Home Assistant** (official, Open Home Foundation).
+- Open → **Enter address manually** → `http://192.168.1.230:8123`
+  (don't auto-discover; it tends to pick the wrong URL).
+- Log in with your HA admin account.
+- Permissions:
+  - **Notifications** — mandatory; the whole point.
+  - **Battery → Unrestricted** (Android Settings → Apps → Home
+    Assistant → Battery). Without this Android drops the FCM
+    connection after a day or two.
+  - **Location** — optional, enables GPS-based arrive/leave triggers.
+- HA auto-creates `mobile_app.<your_device>` + `device_tracker.<phone>`
+  + usually a `person.<you>` entity.
+
+#### 4.8 Tailscale on personal phone (for off-LAN use)
+
+- Play Store → install **Tailscale** → sign in with the same account
+  you used to set up Tailscale on `.230`.
+- Toggle VPN **on**.
+- Android Settings → Apps → Tailscale → **Battery: Unrestricted**
+  (otherwise the VPN dies in the background and off-LAN HA breaks).
+
+Mobile Companion auto-switches between `internal_url` (home Wi-Fi) and
+`external_url` (Tailscale) based on which responds.
+
+#### 4.9 Generic Camera integration (IP Webcam → HA)
+
+**Settings → Devices & Services → + Add Integration → Generic Camera:**
+
+| Field | Value |
+|---|---|
+| Still Image URL | `http://192.168.1.231:8080/shot.jpg` |
+| Stream Source URL | `rtsp://192.168.1.231:8080/h264_pcm.sdp` (or leave blank) |
+| Username / Password | IP Webcam creds |
+| Authentication | Basic |
+| Verify SSL | off |
+| Frame rate | 2 (gentler on wall phone) |
+
+**Gotcha — the wall phone's camera is off-demand.** The `!cctv` command
+wakes IP Webcam, grabs the snap, kills it. So when HA's Generic Camera
+tries to validate the URL during add-integration, the camera is dead
+and HA rejects it. Fix: fire `!cctv on 30` on WhatsApp *first* so the
+camera is awake, *then* hit Submit on HA's form within those 30
+seconds.
+
+**Gotcha — stream URL often 404s.** IP Webcam's RTSP endpoints depend
+on the "Audio format" chosen inside IP Webcam. `/h264_ulaw.sdp` only
+works if audio is G.711 μ-law. Try `/h264_pcm.sdp` or `/h264_aac.sdp`.
+For on-demand operation the stream URL is irrelevant anyway; snapshot
+is enough.
+
+#### 4.10 Met.no weather (no API key)
+
+**Settings → Devices & Services → + Add Integration → Met.no**:
+- Name: `Home`
+- Lat/Lng auto-fill from HA's home coords (Google Maps right-click →
+  copy coords if wrong).
+
+Creates `weather.home`. If Met.no doesn't cover your region well,
+**Open-Meteo** works the same way with no key.
+
+#### 4.11 Wall dashboard
+
+**Settings → Dashboards → Add Dashboard:**
+- Title: `Wall`
+- Icon: `mdi:television-ambient-light`
+- Show in sidebar: on
+
+Edit (top-right ⋮ → Edit Dashboard → + Add Card), build these in
+order:
+
+1. **Picture Entity** → `camera.wall_phone` (tap-action: more-info).
+2. **Entities** titled "Who's home" → `sensor.home_count`,
+   `sensor.away_count`, `person.<you>`.
+3. **Weather Forecast** → `weather.home` (daily).
+4. **Markdown** titled "Clock":
+   ```
+   # {{ now().strftime('%H:%M') }}
+   ### {{ now().strftime('%A, %d %B') }}
+   ```
+5. (optional) **Entities** titled "Quick" with scripts for one-tap
+   `!cctv on 120`, `!intercom off`, etc. Build the scripts later via
+   **Settings → Scripts → + Add Script → (name: `cctv_on_120`,
+   service: `mqtt.publish`, data: `topic: cctv/control, payload:
+   {"action":"start"}`)**.
+
+URL to feed Fully Kiosk: `http://192.168.1.230:8123/wall`
+(or, off-LAN via Tailscale: `http://100.99.232.45:8123/wall`).
+
+#### 4.12 Fully Kiosk on the wall phone
+
+- Play Store → install **Fully Kiosk Browser** (~₹900 lifetime unlock).
+- Settings:
+  - **Start URL:** `http://192.168.1.230:8123/wall`
+  - **Keep screen on while plugged in:** on
+  - **Prevent sleep:** on
+  - **Hide system bars:** on (full-screen)
+  - **Auto reload interval:** 30 min
+- Android Settings → Apps → Fully Kiosk → Battery → **Unrestricted**.
+- Set Fully Kiosk as the **default launcher** so the wall phone boots
+  straight to it (optional but makes it feel more appliance-like).
+
+#### 4.13 Arrival / departure notification
+
+**Settings → Automations & Scenes → + Create Automation → Create new**:
+
+- **Name:** `Arrival / departure notification`
+- **Trigger:** State → entity `person.<you>` (or
+  `device_tracker.<phone>` if the `person` entity hasn't been created
+  yet). Leave From/To blank — we branch in the action.
+- **Action:** Call a service / Perform an action:
+  - **Service:** `notify.mobile_app_<your_phone>`
+  - **Data (YAML):**
+    ```yaml
+    title: "{{ 'You left home' if trigger.to_state.state == 'not_home' else 'Welcome home' }}"
+    message: >
+      {{ trigger.from_state.state }} → {{ trigger.to_state.state }}
+      at {{ now().strftime('%H:%M') }}
+    ```
+
+Toggle **on**. Test via Developer Tools → States → set
+`device_tracker.<phone>` to `not_home` then `home` (reverts after real
+state update).
+
+#### 4.14 Gotchas captured all in one place
+
+- **"59 MB free" was router RAM, not server.** Server has 2.8 GB
+  available. Ignore any old note suggesting otherwise.
+- **Config dir is `/srv/homeassistant/.homeassistant`** because
+  `useradd -d` sets HOME to `/srv/`. Don't pass `/home/homeassistant/...`.
+- **UI refuses to edit homeassistant: keys when YAML owns them.**
+  Edit YAML directly.
+- **`check_config` from `sudo -S` fails on `uv.toml` perms.** Only an
+  issue when running it ad-hoc from a non-homeassistant user; the live
+  service is fine.
+- **Nabu Casa trial auto-starts from the onboarding "Remote access"
+  toggle.** Disable in Cloud settings to avoid being billed.
+- **Generic Camera add fails because IP Webcam is off** — wake with
+  `!cctv on 30` first.
+- **IP Webcam RTSP URL depends on Audio format setting.** `/h264_pcm.sdp`
+  tends to work best. For on-demand use, stream is irrelevant.
+- **Companion drops FCM push after a day** when Android battery
+  optimization kills it. Set Companion to Unrestricted battery.
 
 ```sh
 sudo apt install -y python3-dev python3-venv libffi-dev libssl-dev \

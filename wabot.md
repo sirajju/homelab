@@ -62,6 +62,23 @@ wabot env | path         # inspect config paths
 | `INTERCOM_HTTP_LISTEN=0.0.0.0:8766` | Where audio clips are served |
 | `INTERCOM_PUBLIC_URL=http://192.168.1.230:8766` | What we tell the phone to fetch from |
 | `INTERCOM_CACHE_DIR=/tmp/wabot-intercom` | Where downloaded clips live for TTL minutes |
+| `CCTV_URL=http://192.168.1.231:8080/shot.jpg` | Snapshot endpoint on the wall phone |
+| `CCTV_USER / CCTV_PASSWORD` | IP Webcam credentials (used for both auth header and inline URL embed) |
+| `CCTV_CONTROL_TOPIC=cctv/control` | MQTT topic the phone subscribes to for wake/sleep |
+| `CCTV_START_TIMEOUT=20s` | How long to wait for the camera to come up after publishing `start` |
+| `CCTV_AUTO_STOP=on` | Auto-publish `stop` after a snapshot is grabbed |
+| `CCTV_STREAM_URL` | MJPEG endpoint (default: `CCTV_URL` with `/shot.jpg` → `/video`) |
+| `CCTV_STREAM_URL_EXT` | Optional external MJPEG URL (phone's Tailscale IP) |
+| `CCTV_LIVE_DEFAULT=120s` | Default duration for `!cctv on` |
+| `CCTV_LIVE_MAX=600s` | Cap for `!cctv on <N>` |
+| `STARTUP_NOTIFY=on` | DM first owner on every process start |
+| `MONITOR_ENABLED=on` | System health monitor — DMs owner on threshold crossings |
+| `MONITOR_INTERVAL=60s` | How often to probe system metrics |
+| `MONITOR_MEM_PCT=15` | Alert when available RAM < this % of total |
+| `MONITOR_DISK_PCT=10` | Alert when free disk on `/` < this % |
+| `MONITOR_LOAD_MULT=2.0` | Alert when 1-min load > ncpu × this |
+| `MONITOR_TEMP_C=75` | Alert when CPU temp (°C) > this |
+| `MONITOR_COOLDOWN=30m` | Minimum gap between repeat alerts |
 
 ## Commands
 
@@ -82,9 +99,28 @@ string start with `owner:` and the menu does the right thing automatically.
 - `!send <phone> <text>` — DM any phone from the bot number.
 - `!broadcast <text>` — DM all contacts (rate-limited).
 - `!label <mac> <name> [owner]` — Rename a device in wifi-presence.
-- `!cctv` / `!cam` / `!snap` — Snapshot from the wall-phone camera (via IP Webcam). Wakes the camera on-demand via MQTT, grabs the shot, shuts it off.
+- `!cctv` / `!cam` / `!snap` — One-shot snapshot from the wall-phone camera. Wakes the camera on-demand via MQTT, grabs the shot, shuts it off.
+- `!cctv on [seconds]` — Wake the camera for N seconds (default 120, cap 600), DM back the MJPEG URL(s). Auto-shuts on timer or on `!cctv off`. Great for live viewing without the camera idling.
+- `!cctv off` — Cancel the live timer + stop the camera immediately.
 - `!block <phone>` / `!unblock <phone>` — Blocklist.
 - `!restart`, `!sh <cmd>`, `!shutdown`.
+
+### Background jobs (not commands — things wabot does on its own)
+
+- **Startup DM** — On every process start, one DM to the first owner:
+  `🟢 wabot up on <host> at <time>`. Fires once per process (reconnects
+  don't spam). Disable with `STARTUP_NOTIFY=off`.
+- **System health monitor** — Ticks every `MONITOR_INTERVAL` (default
+  60s) and probes memory / disk / CPU load / CPU temp on `.230`. DMs the
+  first owner on threshold crossings and again on recovery. Thresholds
+  tunable via `MONITOR_MEM_PCT`, `MONITOR_DISK_PCT`, `MONITOR_LOAD_MULT`,
+  `MONITOR_TEMP_C`, `MONITOR_COOLDOWN`. Disable with `MONITOR_ENABLED=off`.
+  See `internal/monitor/monitor.go`.
+- **Intercom** — Owner voice notes in DM → MQTT `intercom/play` → wall
+  phone speaker. Config: `INTERCOM_*`. See wall-phone-plan.md.
+- **CCTV control** — Shares MQTT with intercom (`cctv/control` topic).
+  Phone-side `~/cam-control.sh` listens and runs `am start/am force-stop`.
+  Config: `CCTV_*`.
 
 ## Skills (user-extensible)
 

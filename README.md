@@ -31,7 +31,8 @@ future-me — short, concrete, current.
 
 | Where | What | How it runs | Notes |
 |---|---|---|---|
-| **192.168.1.230** | wa-bot | `wabot.service` (user systemd) | WhatsApp bot, Go + whatsmeow. See [wabot.md](./wabot.md). Also runs the intercom bridge (`:8766`). |
+| **192.168.1.230** | wa-bot | `wabot.service` (user systemd) | WhatsApp bot, Go + whatsmeow. See [wabot.md](./wabot.md). Also runs the intercom bridge (`:8766`) and the system health monitor (DMs owner on cpu/ram/disk/temp thresholds). |
+| **192.168.1.230** | Home Assistant Core | `home-assistant.service` (system systemd) | `:8123`. venv at `/srv/homeassistant`, config at `/srv/homeassistant/.homeassistant`. Mobile Companion-driven push notifications via FCM, MQTT bridged with Mosquitto, Generic Camera via IP Webcam, Met.no weather, custom Wall dashboard. ~400 MB RSS. |
 | **192.168.1.230** | wifi-presence | `presence.service` (user systemd) | LAN presence tracker, Go. Hostnames now land from `/captcha/leases`. See [wifi-presence.md](./wifi-presence.md). |
 | **192.168.1.230** | Mosquitto | `mosquitto.service` (system) | MQTT broker, `:1883` on `0.0.0.0`. Users: `wabot`, `wallphone`, `ha`. Password file **must** be owned by the `mosquitto` service user. |
 | **192.168.1.230** | AdGuard Home | binary daemon | DNS filtering, upstream = router. Was on `.7`, moved to `.230`. |
@@ -68,8 +69,16 @@ on PATH (but one exists at `~/toolchains/go/bin/go` — used by picoclaw).
     launches IP Webcam via `am start`, wabot polls until the snapshot
     URL answers, grabs the shot, publishes `stop`. Camera is idle
     99% of the time. Verified 2026-11-18.
-  - ⏳ **Phase 4** — Home Assistant Core on `.230` for dashboard +
-    mobile companion + camera card. Low-RAM config pinned in the plan.
+  - ✅ **Phase 5b** — `!cctv on [seconds]` / `!cctv off` for live
+    MJPEG streaming (Phase 4-adjacent, not strictly required). Wakes
+    the camera for N seconds, DMs back `.231:8080/video` URL plus an
+    optional Tailscale URL. Auto-stops on timer or `!cctv off`.
+    Shipped 2026-11-21 (`f395b07`).
+  - ✅ **Phase 4** — Home Assistant Core on `.230`. Internal + external
+    (Tailscale) URLs wired, MQTT bridged with Mosquitto, Generic Camera
+    via IP Webcam, Met.no weather, custom "Wall" dashboard, Mobile
+    Companion app push notifications via FCM. Full install walkthrough
+    + every gotcha we hit in the plan file. 2026-11-21.
 
 ## Known gotchas (things that broke before)
 
