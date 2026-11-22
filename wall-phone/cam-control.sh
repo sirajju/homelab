@@ -16,12 +16,12 @@ while true; do
   | while read -r line; do
       action=$(echo "$line" | jq -r '.action' 2>/dev/null)
       case "$action" in
-        start|live|cctv_start)
-          # Start IP Webcam when live stream is explicitly requested
-          su -c "am start -n $CAM_PKG/.Rolling && sleep 0.2 && am start -n xyz.wallpanel.app/.ui.activities.BrowserActivityNative" >/dev/null 2>&1
+        start|cctv_start)
+          # Start IP Webcam with launch wait, then immediately restore WallPanel to foreground
+          su -c "am start -W -n $CAM_PKG/.Rolling --activity-no-animation && am start -n xyz.wallpanel.app/.ui.activities.BrowserActivityNative --activity-no-animation" >/dev/null 2>&1
           ;;
         stop|cctv_stop)
-          su -c "am force-stop $CAM_PKG && am start -n xyz.wallpanel.app/.ui.activities.BrowserActivityNative" >/dev/null 2>&1
+          su -c "am force-stop $CAM_PKG && am start -n xyz.wallpanel.app/.ui.activities.BrowserActivityNative --activity-no-animation" >/dev/null 2>&1
           ;;
         gemini|assistant)
           # Open Gemini Voice Assistant Floaty overlay
