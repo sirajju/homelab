@@ -359,8 +359,12 @@ while true; do
   | while read -r line; do
       action=$(echo "$line" | jq -r '.action' 2>/dev/null)
       case "$action" in
-        start) su -c "am start -n $CAM_PKG/.Rolling" >/dev/null 2>&1 ;;
-        stop)  su -c "am force-stop $CAM_PKG" >/dev/null 2>&1 ;;
+        start) su -c "am start -n $CAM_PKG/.Rolling && sleep 0.2 && am start -n xyz.wallpanel.app/.ui.activities.BrowserActivityNative" >/dev/null 2>&1 ;;
+        stop)  su -c "am force-stop $CAM_PKG && am start -n xyz.wallpanel.app/.ui.activities.BrowserActivityNative" >/dev/null 2>&1 ;;
+        gemini|assistant) su -c "input keyevent 231" >/dev/null 2>&1 ;; # Summons Gemini Assistant overlay
+        live) su -c "input keyevent 231 && sleep 0.3 && input tap 860 2202" >/dev/null 2>&1 ;; # Starts Gemini Live
+        gemini_app) su -c "am start -n com.google.android.apps.bard/.shellapp.BardEntryPointActivity" >/dev/null 2>&1 ;;
+        wallpanel|dismiss) su -c "input keyevent 4 || am start -n xyz.wallpanel.app/.ui.activities.BrowserActivityNative" >/dev/null 2>&1 ;;
       esac
     done
   sleep 5
