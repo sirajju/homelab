@@ -1,0 +1,1 @@
+/data/data/com.termux/files/home/watchdog-net.sh >/dev/null 2>&1 &

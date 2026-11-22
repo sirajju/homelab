@@ -16,19 +16,20 @@ while true; do
   | while read -r line; do
       action=$(echo "$line" | jq -r '.action' 2>/dev/null)
       case "$action" in
-        start)
+        live)
+          # Only start IP Webcam when live stream is explicitly requested
           su -c "am start -n $CAM_PKG/.Rolling && sleep 0.2 && am start -n xyz.wallpanel.app/.ui.activities.BrowserActivityNative" >/dev/null 2>&1
           ;;
         stop)
-          su -c "am force-stop $CAM_PKG && am start -n xyz.wallpanel.app/.ui.activities.BrowserActivityNative" >/dev/null 2>&1
+          su -c "am force-stop $CAM_PKG" >/dev/null 2>&1
+          ;;
+        start)
+          # Silent background snapshots are handled by bgcam on port 8088.
+          # Zero UI disruption on screen.
           ;;
         gemini|assistant)
           # Open Gemini Voice Assistant Floaty overlay
           su -c "input keyevent 231" >/dev/null 2>&1
-          ;;
-        live)
-          # Open Gemini Floaty and tap Gemini Live button
-          su -c "input keyevent 231 && sleep 0.3 && input tap 860 2202" >/dev/null 2>&1
           ;;
         gemini_app)
           # Launch full Gemini app

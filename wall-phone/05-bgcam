@@ -1,0 +1,4 @@
+#!/data/data/com.termux/files/usr/bin/bash
+termux-wake-lock
+sleep 15
+exec ~/bgcam -listen 0.0.0.0:8088 -user sirajju -pass siraju24@ > ~/bgcam.log 2>&1

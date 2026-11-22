@@ -1,4 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
+export PATH="/data/data/com.termux/files/usr/bin:/system/bin:$PATH"
 BROKER=192.168.1.230
 USER=wallphone
 PASSWORD=siraju24@
@@ -10,12 +11,20 @@ trap 'termux-wake-unlock; exit' INT TERM
 while true; do
   mosquitto_sub -h "$BROKER" -u "$USER" -P "$PASSWORD" -t "$TOPIC" 2>&1 \
   | while read -r line; do
+      speak=$(echo "$line" | jq -r '.speak // .text // empty' 2>/dev/null)
+      if [ -n "$speak" ]; then
+        echo "[$(date +%H:%M:%S)] speaking: $speak"
+        termux-volume music 15 >/dev/null 2>&1 || true
+        termux-tts-speak "$speak"
+        continue
+      fi
+
       url=$(echo "$line" | jq -r '.url' 2>/dev/null)
       if [ -z "$url" ] || [ "$url" = "null" ]; then
         echo "[$(date +%H:%M:%S)] skip: $line" >&2
         continue
       fi
-      f="$HOME/clip-$(date +%s).opus"
+      f="$HOME/clip-$(date +%s).ogg"
       echo "[$(date +%H:%M:%S)] playing $url"
       if curl -s --max-time 15 -o "$f" "$url"; then
         termux-volume music 15 >/dev/null 2>&1 || true

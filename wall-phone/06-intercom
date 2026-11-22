@@ -1,0 +1,10 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Keep Termux's foreground service alive
+termux-wake-lock
+sleep 15
+
+# Prime the IPC bridge so the first real media-player call doesn't hang
+termux-volume music >/dev/null 2>&1 || true
+
+# Start intercom
+exec ~/intercom.sh > ~/intercom.log 2>&1
