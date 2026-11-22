@@ -1005,6 +1005,30 @@ Fully Kiosk on the wall points there.
   (`2620:fe::10`, `2620:fe::fe:10`) from `/opt/AdGuardHome/AdGuardHome.yaml` on `.230`,
   eliminating DNS resolution i/o timeouts.
 
+### Phase 6 — watchdog, presence security & butler ✅ DONE 2026-11-22
+
+- **Cellular Out-of-Band Broadband Watchdog:** Daemon `~/watchdog-net.sh` and boot
+  hook `~/.termux/boot/04-watchdog` on the wall phone. Continuously pings public DNS
+  (`1.1.1.1`) explicitly through `wlan0`. If home broadband (Kerala Vision PPPoE) drops,
+  the phone detects whether it's an ISP fiber break or a router power loss, and sends an
+  out-of-band alert SMS via its BSNL SIM directly to the owner (`7593980565`). Sends a
+  recovery SMS with downtime duration once Wi-Fi internet returns.
+- **Spoken Arrival Welcome on Wall Phone:** Extended `~/intercom.sh` on `.231` to parse
+  `speak` or `text` keys from MQTT `intercom/play` and route to `termux-tts-speak`.
+  Updated Home Assistant automation `arrival_sirajju` on `.230` to publish
+  `{"speak":"Welcome home Sirajju!"}` on arrival, greeting the user out loud upon entering.
+- **Intruder & Security Check (`!intruder` / `!check`):** Added to `wabot`. Correlates
+  real-time LAN presence (`wifi-presence`) with the living room camera. If called, checks
+  whether the home is empty (0 devices) or occupied, wakes the wall phone camera, takes
+  a security verification photo, and DMs the report to WhatsApp.
+- **Network Speedtest Butler (`!speedtest` / `!speed`):** Added to `wabot`. Runs a
+  lightweight, 3-second network benchmark directly from `.230` testing ping latency,
+  download (10 MB), and upload (3 MB) against Cloudflare edge CDN, formatting results
+  directly in WhatsApp.
+- **Microphone API & Local HTTPS Hardening:** Fixed WebView microphone permissions by
+  restoring Let's Encrypt SSL in `.storage/http` and binding local DNS in `~/.termux/boot/01-hosts`
+  to guarantee zero-latency HTTPS access to `https://sirajju.tail7dc29c.ts.net:8123/wall-view/0?kiosk=1`.
+
 ## Risks / open questions
 
 - **Battery health on perma-charge.** Modern phones throttle charging
