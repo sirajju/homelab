@@ -1,4 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
+export HOME="/data/data/com.termux/files/home"
 export PATH="/data/data/com.termux/files/usr/bin:/system/bin:$PATH"
 BROKER=192.168.1.230
 USER=wallphone
@@ -26,7 +27,7 @@ while true; do
       fi
       f="$HOME/clip-$(date +%s).ogg"
       echo "[$(date +%H:%M:%S)] playing $url"
-      if curl -s --max-time 15 -o "$f" "$url"; then
+      if curl -k -s --max-time 15 --resolve "sirajju.tail7dc29c.ts.net:8766:192.168.1.230" -o "$f" "$url"; then
         termux-volume music 15 >/dev/null 2>&1 || true
         termux-media-player play "$f"
         secs=$(echo "$line" | jq -r '.seconds // 10' 2>/dev/null)
