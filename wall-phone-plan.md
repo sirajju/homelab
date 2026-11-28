@@ -930,7 +930,47 @@ dead: **Settings → Developer options → "Mobile data always active"**.
 Without it, Android holds cellular off while Wifi is "connected but
 offline", and the outgoing ntfy POST stalls.
 
-#### 4.16 Gotchas captured all in one place
+#### 4.16 Wall-phone battery + heat watchdog ✅ 2026-11-28
+
+Companion to the `.230`-down watchdog. Same ntfy topic, different
+sensor — `termux-battery-status` returns percentage, temperature and
+plug state as JSON, `jq` parses, `curl` POSTs to ntfy on threshold
+crossings with a 30-min same-alert cooldown.
+
+Thresholds:
+- Battery `≤20%` unplugged → warn (`high` priority).
+- Battery `≤10%` unplugged → critical (`max` priority, repeats every
+  30 min until plugged in).
+- Temp `≥42°C` → warn (`high`).
+- Temp `≥48°C` → critical (`max`). Usually means IP Webcam got left
+  on during `!cctv on N` or the phone's in direct sunlight.
+
+Source: `https://sirajju.tail7dc29c.ts.net:8123/local/wallphone-health.sh`.
+Install mirrors watchdog-230:
+
+```sh
+pkg install -y curl jq termux-api
+curl -sk https://sirajju.tail7dc29c.ts.net:8123/local/wallphone-health.sh \
+     -o ~/wallphone-health.sh
+chmod +x ~/wallphone-health.sh
+
+cat > ~/.termux/boot/wallphone-health <<'EOF'
+#!/data/data/com.termux/files/usr/bin/bash
+termux-wake-lock
+sleep 25
+nohup ~/wallphone-health.sh >> ~/wallphone-health.log 2>&1 < /dev/null &
+disown
+EOF
+chmod +x ~/.termux/boot/wallphone-health
+
+nohup ~/wallphone-health.sh >> ~/wallphone-health.log 2>&1 < /dev/null &
+disown
+```
+
+Reuses `~/.ntfy-topic` — same push lands on the same subscribed topic
+in your personal phone's ntfy app.
+
+#### 4.17 Gotchas captured all in one place
 
 - **"59 MB free" was router RAM, not server.** Server has 2.8 GB
   available. Ignore any old note suggesting otherwise.
