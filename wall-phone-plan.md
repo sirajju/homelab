@@ -901,7 +901,36 @@ treats its configured HA URL as a trusted origin for mic — the mic
 page now lives on the same HA origin, so Companion grants the prompt
 normally.
 
-#### 4.15 Gotchas captured all in one place
+#### 4.15 `.230` is-down watchdog ✅ 2026-11-28
+
+If `.230` dies — power out, ISP out, kernel panic — wabot and HA die
+with it, so neither the normal WhatsApp alerts nor the HA Companion
+FCM push will fire. The wall phone is the natural watchdog: it has
+its own SIM, so it can escape over cellular and tell you from a
+completely different channel.
+
+Out-of-band channel: **ntfy.sh**. Free, no account, HTTP-only POSTs
+to a hard-to-guess topic. Install the ntfy app on your personal phone,
+subscribe to the same topic, done.
+
+Watchdog script lives on the wall phone at `~/watchdog-230.sh`,
+boot-started by `~/.termux/boot/watchdog-230`. Full source at
+`https://sirajju.tail7dc29c.ts.net:8123/local/watchdog-230.sh` for
+re-install. Shape:
+
+- Every 2 min, try 3 paths: HA over Tailscale, HA over LAN IP,
+  wabot's `/healthz` over Tailscale. ANY success = up.
+- After 3 consecutive misses (~6 min), POST to ntfy.sh with the alert.
+  `Priority: max` so iOS/Android ring even on silent.
+- On recovery, send a normal-priority "back up" message.
+- `termux-wake-lock` keeps the loop running when the screen is off.
+
+One Android setting you must flip so ntfy still delivers when Wifi is
+dead: **Settings → Developer options → "Mobile data always active"**.
+Without it, Android holds cellular off while Wifi is "connected but
+offline", and the outgoing ntfy POST stalls.
+
+#### 4.16 Gotchas captured all in one place
 
 - **"59 MB free" was router RAM, not server.** Server has 2.8 GB
   available. Ignore any old note suggesting otherwise.
